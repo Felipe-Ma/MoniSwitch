@@ -110,6 +110,13 @@ internal static class ShellInterop
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    /// <summary>Every top-level window, hidden ones included — how a second instance pokes the first.</summary>
+    internal static readonly IntPtr HWND_BROADCAST = new(0xFFFF);
+
+    [DllImport(User32, CharSet = CharSet.Unicode, EntryPoint = "PostMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     [DllImport(User32, ExactSpelling = true)]
     internal static extern int GetSystemMetrics(int index);
 

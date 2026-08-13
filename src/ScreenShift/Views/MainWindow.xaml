@@ -285,7 +285,7 @@
                     </Border>
 
                     <!-- Capped: many profiles scroll inside this list rather than growing the page. -->
-                    <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer MaxHeight="310" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Profiles}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

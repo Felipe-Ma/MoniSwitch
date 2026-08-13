@@ -153,6 +153,12 @@ public partial class MainWindow : Window
         _tray?.HandleMessage(msg, wParam, lParam);
         _viewModel.HandleWindowMessage(msg, wParam);
 
+        // A second launch broadcast this instead of starting: bring this instance forward.
+        if (App.ShowExistingInstanceMessage != 0 && msg == (int)App.ShowExistingInstanceMessage)
+        {
+            RestoreFromTray();
+        }
+
         return IntPtr.Zero;
     }
 

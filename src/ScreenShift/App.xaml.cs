@@ -11,12 +11,33 @@ namespace ScreenShift;
 
 public partial class App : Application
 {
+    /// <summary>Local\ scope: one instance per signed-in user, not per machine.</summary>
+    private const string SingleInstanceMutexName = @"Local\ScreenShift.SingleInstance";
+
+    /// <summary>Broadcast by a second launch so the running instance shows its window.</summary>
+    public static readonly uint ShowExistingInstanceMessage =
+        Native.ShellInterop.RegisterWindowMessage("ScreenShift.ShowExistingInstance");
+
     private IAppLogger _logger = NullLogger.Instance;
     private HotkeyService? _hotkeyService;
+    private Mutex? _singleInstanceMutex;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Two instances mean two tray icons, a second set of hotkey registrations that silently
+        // fails, and two windows saving over the same profiles.json with independent in-memory
+        // lists. Nothing good lives there, so a second launch just wakes the first instance up.
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isFirstInstance);
+
+        if (!isFirstInstance)
+        {
+            Native.ShellInterop.PostMessage(
+                Native.ShellInterop.HWND_BROADCAST, ShowExistingInstanceMessage, IntPtr.Zero, IntPtr.Zero);
+            Shutdown();
+            return;
+        }
 
         _logger = new FileLogger();
 
