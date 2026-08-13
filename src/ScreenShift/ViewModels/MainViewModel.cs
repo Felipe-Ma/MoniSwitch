@@ -24,6 +24,8 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly IDisplayService _displayService;
     private readonly DisplayProfileService _profileService;
+    private readonly HotkeyService _hotkeyService;
+    private readonly SettingsService _settingsService;
     private readonly IUserInteraction _interaction;
     private readonly IAppLogger _logger;
 
@@ -40,11 +42,15 @@ public sealed class MainViewModel : ObservableObject
     public MainViewModel(
         IDisplayService displayService,
         DisplayProfileService profileService,
+        HotkeyService hotkeyService,
+        SettingsService settingsService,
         IUserInteraction interaction,
         IAppLogger logger)
     {
         _displayService = displayService;
         _profileService = profileService;
+        _hotkeyService = hotkeyService;
+        _settingsService = settingsService;
         _interaction = interaction;
         _logger = logger;
 
@@ -52,6 +58,8 @@ public sealed class MainViewModel : ObservableObject
         ApplyCommand = new RelayCommand(ApplyChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
         ResetCommand = new RelayCommand(ResetChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
         SaveProfileCommand = new RelayCommand(SaveCurrentAsProfile, () => !_isApplying);
+
+        _hotkeyService.ProfileHotkeyPressed += ApplyProfileById;
 
         LoadProfiles();
     }
@@ -66,6 +74,40 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<ProfileViewModel> Profiles { get; } = [];
 
     public bool HasProfiles => Profiles.Count > 0;
+
+    // --- Settings, written through to settings.json on change --------------
+
+    public bool ShowTrayIcon
+    {
+        get => _settingsService.Current.ShowTrayIcon;
+        set
+        {
+            if (_settingsService.Current.ShowTrayIcon == value)
+            {
+                return;
+            }
+
+            _settingsService.Current.ShowTrayIcon = value;
+            _settingsService.Save();
+            OnPropertyChanged();
+        }
+    }
+
+    public bool CloseToTray
+    {
+        get => _settingsService.Current.CloseToTray;
+        set
+        {
+            if (_settingsService.Current.CloseToTray == value)
+            {
+                return;
+            }
+
+            _settingsService.Current.CloseToTray = value;
+            _settingsService.Save();
+            OnPropertyChanged();
+        }
+    }
 
     public RelayCommand RefreshCommand { get; }
 
@@ -325,6 +367,65 @@ public sealed class MainViewModel : ObservableObject
     // Profiles
     // ------------------------------------------------------------------
 
+    /// <summary>The window calls this once its handle exists; hotkeys cannot register earlier.</summary>
+    public void InitializeHotkeys(IntPtr windowHandle)
+    {
+        _hotkeyService.Initialize(windowHandle);
+        SyncHotkeys();
+    }
+
+    /// <summary>Forwarded from the window procedure. True when the message was a hotkey of ours.</summary>
+    public bool HandleWindowMessage(int msg, IntPtr wParam) => _hotkeyService.HandleMessage(msg, wParam);
+
+    private void ApplyProfileById(Guid profileId)
+    {
+        if (Profiles.FirstOrDefault(p => p.Model.Id == profileId) is { } profile)
+        {
+            ApplyProfile(profile);
+        }
+    }
+
+    private void SyncHotkeys()
+    {
+        if (!_hotkeyService.IsInitialized)
+        {
+            return;
+        }
+
+        var failures = _hotkeyService.Sync(_profileService.Profiles.Select(p => (p.Id, p.Name, p.Hotkey)));
+
+        if (failures.Count > 0)
+        {
+            StatusText = failures[0];
+        }
+    }
+
+    private void SetHotkeyForProfile(ProfileViewModel profile)
+    {
+        var result = _interaction.PromptForHotkey(profile.Name, profile.Model.Hotkey);
+        if (result.Cancelled)
+        {
+            return;
+        }
+
+        try
+        {
+            var takenFrom = _profileService.SetHotkey(profile.Model.Id, result.Hotkey);
+            LoadProfiles();
+
+            StatusText = result.Hotkey is null
+                ? $"Hotkey removed from \"{profile.Name}\"."
+                : takenFrom is null
+                    ? $"{result.Hotkey} now applies \"{profile.Name}\"."
+                    : $"{result.Hotkey} now applies \"{profile.Name}\" (taken from \"{takenFrom}\").";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Setting a hotkey failed.", ex);
+            _interaction.ShowError("Could not set the hotkey", ex.Message);
+        }
+    }
+
     private void LoadProfiles()
     {
         Profiles.Clear();
@@ -338,10 +439,14 @@ public sealed class MainViewModel : ObservableObject
                 UpdateProfile,
                 DuplicateProfile,
                 DeleteProfile,
+                SetHotkeyForProfile,
                 () => !_isApplying));
         }
 
         OnPropertyChanged(nameof(HasProfiles));
+
+        // Wholesale re-sync keeps registrations exactly in step with the list, whatever changed.
+        SyncHotkeys();
     }
 
     private void SaveCurrentAsProfile()

@@ -18,6 +18,8 @@ public static class AppPaths
 
     public static string ProfilesFile { get; } = Path.Combine(RootDirectory, "profiles.json");
 
+    public static string SettingsFile { get; } = Path.Combine(RootDirectory, "settings.json");
+
     public static void EnsureCreated()
     {
         Directory.CreateDirectory(RootDirectory);

@@ -68,5 +68,11 @@ public sealed class DisplayProfile
 
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>
+    /// Global hotkey in <see cref="HotkeyGesture"/> string form ("Ctrl+Alt+1"), or null for none.
+    /// A gesture belongs to at most one profile; assignment moves it rather than duplicating it.
+    /// </summary>
+    public string? Hotkey { get; set; }
+
     public List<ProfileMonitorConfig> Monitors { get; set; } = [];
 }

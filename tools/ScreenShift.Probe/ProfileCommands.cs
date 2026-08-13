@@ -143,6 +143,35 @@ internal static class ProfileCommands
         return 1;
     }
 
+    public static int SetHotkey(string name, string gestureText)
+    {
+        var (_, profiles) = Create();
+
+        var found = profiles.Profiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (found is null)
+        {
+            Console.Error.WriteLine($"No profile named \"{name}\".");
+            return 2;
+        }
+
+        if (string.Equals(gestureText, "clear", StringComparison.OrdinalIgnoreCase))
+        {
+            profiles.SetHotkey(found.Id, null);
+            Console.WriteLine($"Hotkey cleared for \"{found.Name}\".");
+            return 0;
+        }
+
+        if (!ScreenShift.Models.HotkeyGesture.TryParse(gestureText, out var gesture))
+        {
+            Console.Error.WriteLine($"'{gestureText}' is not a usable hotkey. It needs Ctrl, Alt or Win plus a key, e.g. Ctrl+Alt+1.");
+            return 2;
+        }
+
+        var takenFrom = profiles.SetHotkey(found.Id, gesture.ToString());
+        Console.WriteLine($"{gesture} now applies \"{found.Name}\"{(takenFrom is null ? string.Empty : $" (taken from \"{takenFrom}\")")}.");
+        return 0;
+    }
+
     private static (DisplayService Displays, DisplayProfileService Profiles) Create()
     {
         var logger = new ConsoleLogger();

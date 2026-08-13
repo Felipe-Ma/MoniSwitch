@@ -47,6 +47,8 @@ internal static class WindowCapture
                 var viewModel = new MainViewModel(
                     displayService,
                     new DisplayProfileService(displayService, logger),
+                    new HotkeyService(logger),
+                    new SettingsService(logger),
                     new DialogUserInteraction(() => null),
                     logger);
 
@@ -74,7 +76,9 @@ internal static class WindowCapture
                     }
                     finally
                     {
-                        window.Close();
+                        // ForceExit, not Close: with close-to-tray on, a plain Close would hide
+                        // the window and strand a ghost tray icon when the process ends.
+                        window.ForceExit();
                         app.Shutdown();
                     }
                 };

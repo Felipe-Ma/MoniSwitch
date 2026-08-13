@@ -16,6 +16,7 @@ public sealed class ProfileViewModel : ObservableObject
         Action<ProfileViewModel> update,
         Action<ProfileViewModel> duplicate,
         Action<ProfileViewModel> delete,
+        Action<ProfileViewModel> setHotkey,
         Func<bool> canAct)
     {
         Model = model;
@@ -25,6 +26,7 @@ public sealed class ProfileViewModel : ObservableObject
         UpdateCommand = new RelayCommand(() => update(this), canAct);
         DuplicateCommand = new RelayCommand(() => duplicate(this), canAct);
         DeleteCommand = new RelayCommand(() => delete(this), canAct);
+        SetHotkeyCommand = new RelayCommand(() => setHotkey(this), canAct);
     }
 
     public DisplayProfile Model { get; }
@@ -39,7 +41,12 @@ public sealed class ProfileViewModel : ObservableObject
 
     public RelayCommand DeleteCommand { get; }
 
+    public RelayCommand SetHotkeyCommand { get; }
+
     public string Name => Model.Name;
+
+    /// <summary>The gesture when one is set, otherwise an invitation — doubles as the button label.</summary>
+    public string HotkeyButtonText => string.IsNullOrEmpty(Model.Hotkey) ? "Hotkey…" : Model.Hotkey!;
 
     public string SummaryText
     {
@@ -66,5 +73,6 @@ public sealed class ProfileViewModel : ObservableObject
         UpdateCommand.RaiseCanExecuteChanged();
         DuplicateCommand.RaiseCanExecuteChanged();
         DeleteCommand.RaiseCanExecuteChanged();
+        SetHotkeyCommand.RaiseCanExecuteChanged();
     }
 }

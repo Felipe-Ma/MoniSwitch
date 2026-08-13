@@ -3,10 +3,11 @@
 A lightweight Windows monitor profile manager. Save display layouts and switch between them in one
 click, without opening Settings.
 
-Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 to 5 are complete**: monitors are detected
+Built to the spec in [AGENTS.md](AGENTS.md). **All six phases are complete**: monitors are detected
 and shown, everything about them can be changed (on/off, resolution, refresh rate, orientation,
-position, primary), and named profiles capture whole layouts and bring them back with one click —
-protected by a 15-second automatic revert if the result is unusable.
+position, primary), named profiles capture whole layouts and bring them back with one click —
+protected by a 15-second automatic revert — and profiles are reachable from a system tray menu or
+a global hotkey without the window ever being open.
 
 ## Requirements
 
@@ -126,6 +127,23 @@ connected is skipped with a warning. Applying is protected by the same 15-second
 changes — and the revert prompt defaults to *revert*, so a user who cannot see anything gets their
 old configuration back by doing nothing.
 
+## Tray and hotkeys
+
+The tray icon (P/Invoked `Shell_NotifyIcon` — no packages, no WinForms) gives every profile a
+one-click apply from the taskbar: right-click for the menu, left-click to open the window. It
+re-adds itself when Explorer restarts, and its icon is drawn in code by the same routine that
+generates the executable's .ico, so the two cannot drift apart.
+
+Global hotkeys go through `RegisterHotKey`, the sanctioned API, not a keyboard hook. Each profile
+can hold one gesture (set from its card; press the combination rather than typing it), stored in
+profiles.json as plain text like `Ctrl+Alt+1`. A gesture must include Ctrl, Alt or Win — Shift-only
+would swallow ordinary typing — and a gesture already owned by another program costs that one
+hotkey, never the app. Assigning a gesture that another profile holds moves it.
+
+Closing the window hides to the tray by default, because hotkeys only work while the process is
+alive; Exit in the tray menu really exits. Both behaviours are settings, stored in
+`%APPDATA%\ScreenShift\settings.json` and toggleable in the app.
+
 ## Testing display changes
 
 These write to the live display configuration. `--test-apply` always targets a non-primary display
@@ -167,6 +185,11 @@ the path that rescues a user who cannot see anything:
 dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --test-dialog 4
 ```
 
+`--test-hotkey` registers Ctrl+Alt+F9 through the real hotkey service, injects the combination,
+and requires the WM_HOTKEY round trip to fire. `--test-tray` adds and removes a real tray icon.
+`--profile-hotkey <name> <gesture|clear>` assigns hotkeys from the command line, and the probe's
+make-icon command regenerates `Assets/app.ico` from the in-code icon drawing.
+
 ## Logs
 
 Everything, including every display API failure with the adapter and target ids that caused it,
@@ -187,4 +210,4 @@ Logs older than seven days are deleted at startup.
 | 3 | Enable/disable monitors, topology switching | Done |
 | 4 | Save and load profiles | Done |
 | 5 | One-click apply with rollback | Done |
-| 6 | Tray icon, global hotkeys, polish | Not started |
+| 6 | Tray icon, global hotkeys, polish | Done |

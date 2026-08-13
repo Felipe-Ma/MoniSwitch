@@ -11,6 +11,7 @@ namespace ScreenShift;
 public partial class App : Application
 {
     private IAppLogger _logger = NullLogger.Instance;
+    private HotkeyService? _hotkeyService;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -31,6 +32,8 @@ public partial class App : Application
             // misshapen buffer and reading back plausible-looking nonsense.
             var displayService = new DisplayService(_logger);
             var profileService = new DisplayProfileService(displayService, _logger);
+            var settingsService = new SettingsService(_logger);
+            _hotkeyService = new HotkeyService(_logger);
 
             // The dialogs want the main window as their owner, but the window needs the view
             // model, which needs the interaction service. A late-bound accessor unties that knot
@@ -38,7 +41,8 @@ public partial class App : Application
             MainWindow? window = null;
             var interaction = new DialogUserInteraction(() => window);
 
-            var viewModel = new MainViewModel(displayService, profileService, interaction, _logger);
+            var viewModel = new MainViewModel(
+                displayService, profileService, _hotkeyService, settingsService, interaction, _logger);
 
             window = new MainWindow(viewModel);
             MainWindow = window;
@@ -58,6 +62,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _hotkeyService?.Dispose();
         _logger.Info($"--- ScreenShift exiting (code {e.ApplicationExitCode}) ---");
         base.OnExit(e);
     }

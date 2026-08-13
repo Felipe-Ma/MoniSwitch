@@ -141,6 +141,9 @@ public sealed class DialogUserInteraction : IUserInteraction
     public string? PromptForText(string title, string prompt, string initialValue = "") =>
         TextPromptDialog.Show(_ownerAccessor(), title, prompt, initialValue);
 
+    public HotkeyPromptResult PromptForHotkey(string profileName, string? currentHotkey) =>
+        HotkeyPromptDialog.ShowFor(_ownerAccessor(), profileName, currentHotkey);
+
     public void ShowError(string title, string message) =>
         MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
 }

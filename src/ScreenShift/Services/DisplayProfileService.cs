@@ -105,6 +105,8 @@ public sealed class DisplayProfileService
         var source = Find(id);
         var now = DateTime.Now;
 
+        // The hotkey is deliberately not copied: a gesture can only apply one profile, and the
+        // original keeps it.
         var copy = new DisplayProfile
         {
             Name = UniqueName(source.Name),
@@ -116,6 +118,36 @@ public sealed class DisplayProfileService
         _profiles.Insert(_profiles.IndexOf(source) + 1, copy);
         Save();
         return copy;
+    }
+
+    /// <summary>
+    /// Assigns (or clears, with null) a profile's global hotkey. A gesture already held by another
+    /// profile is taken from it — deterministic, and matches what a user assigning a key expects.
+    /// </summary>
+    /// <returns>The name of the profile the gesture was taken from, if any.</returns>
+    public string? SetHotkey(Guid id, string? hotkey)
+    {
+        var profile = Find(id);
+        string? takenFrom = null;
+
+        if (hotkey is not null)
+        {
+            foreach (var other in _profiles.Where(p =>
+                         p.Id != id && string.Equals(p.Hotkey, hotkey, StringComparison.OrdinalIgnoreCase)))
+            {
+                other.Hotkey = null;
+                takenFrom = other.Name;
+            }
+        }
+
+        profile.Hotkey = hotkey;
+        Save();
+
+        _logger.Info(hotkey is null
+            ? $"Cleared the hotkey for \"{profile.Name}\"."
+            : $"Hotkey {hotkey} now applies \"{profile.Name}\"{(takenFrom is null ? string.Empty : $" (taken from \"{takenFrom}\")")}.");
+
+        return takenFrom;
     }
 
     public void Delete(Guid id)

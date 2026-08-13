@@ -68,6 +68,40 @@ if (args.Any(a => string.Equals(a, "--persist", StringComparison.OrdinalIgnoreCa
     return persistResult.Succeeded ? 0 : 1;
 }
 
+var makeIconIndex = Array.FindIndex(args, a => string.Equals(a, "--make-icon", StringComparison.OrdinalIgnoreCase));
+if (makeIconIndex >= 0)
+{
+    if (makeIconIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--make-icon needs an output path, e.g. --make-icon app.ico");
+        return 2;
+    }
+
+    return MakeIcon.Run(args[makeIconIndex + 1]);
+}
+
+if (args.Any(a => string.Equals(a, "--test-tray", StringComparison.OrdinalIgnoreCase)))
+{
+    return TrayTest.Run();
+}
+
+if (args.Any(a => string.Equals(a, "--test-hotkey", StringComparison.OrdinalIgnoreCase)))
+{
+    return HotkeyTest.Run();
+}
+
+var profileHotkeyIndex = Array.FindIndex(args, a => string.Equals(a, "--profile-hotkey", StringComparison.OrdinalIgnoreCase));
+if (profileHotkeyIndex >= 0)
+{
+    if (profileHotkeyIndex + 2 >= args.Length)
+    {
+        Console.Error.WriteLine("--profile-hotkey needs a profile name and a gesture (or 'clear'), e.g. --profile-hotkey Baseline Ctrl+Alt+1");
+        return 2;
+    }
+
+    return ProfileCommands.SetHotkey(args[profileHotkeyIndex + 1], args[profileHotkeyIndex + 2]);
+}
+
 var profileSaveIndex = Array.FindIndex(args, a => string.Equals(a, "--profile-save", StringComparison.OrdinalIgnoreCase));
 if (profileSaveIndex >= 0)
 {
