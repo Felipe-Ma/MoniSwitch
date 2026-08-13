@@ -17,13 +17,18 @@ if (args.Any(a => string.Equals(a, "--modes", StringComparison.OrdinalIgnoreCase
     return ModeDump.Run();
 }
 
+if (args.Any(a => string.Equals(a, "--check-persist", StringComparison.OrdinalIgnoreCase)))
+{
+    return PersistenceCheck.Run();
+}
+
 if (args.Any(a => string.Equals(a, "--persist", StringComparison.OrdinalIgnoreCase)))
 {
     var persistLogger = new ConsoleLogger();
     var persistResult = new DisplayService(persistLogger).PersistCurrentConfiguration();
 
     Console.WriteLine(persistResult.Succeeded
-        ? "The current display configuration was written to the registry."
+        ? "The current display configuration was saved; it should survive a reboot."
         : $"Could not persist: {persistResult.Message}");
 
     return persistResult.Succeeded ? 0 : 1;

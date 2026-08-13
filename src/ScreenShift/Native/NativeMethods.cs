@@ -38,6 +38,35 @@ internal static class NativeConstants
     public const int ERROR_INSUFFICIENT_BUFFER = 122;
     public const int ERROR_GEN_FAILURE = 31;
 
+    // --- SetDisplayConfig flags --------------------------------------------
+    // Windows 11 keeps display configuration in the CCD database, not the registry keys the GDI
+    // path writes to, so this is the only way to make a change survive a reboot.
+    public const uint SDC_TOPOLOGY_INTERNAL = 0x00000001;
+    public const uint SDC_TOPOLOGY_CLONE = 0x00000002;
+    public const uint SDC_TOPOLOGY_EXTEND = 0x00000004;
+    public const uint SDC_TOPOLOGY_EXTERNAL = 0x00000008;
+    public const uint SDC_TOPOLOGY_SUPPLIED = 0x00000010;
+
+    /// <summary>Use the path and mode arrays the caller supplies rather than a stored topology.</summary>
+    public const uint SDC_USE_SUPPLIED_DISPLAY_CONFIG = 0x00000020;
+
+    /// <summary>Check the configuration without applying it. The CCD counterpart of CDS_TEST.</summary>
+    public const uint SDC_VALIDATE = 0x00000040;
+
+    public const uint SDC_APPLY = 0x00000080;
+    public const uint SDC_NO_OPTIMIZATION = 0x00000100;
+
+    /// <summary>Persist the configuration. Must be combined with SDC_APPLY.</summary>
+    public const uint SDC_SAVE_TO_DATABASE = 0x00000200;
+
+    /// <summary>Let Windows adjust the supplied configuration if it needs to in order to apply it.</summary>
+    public const uint SDC_ALLOW_CHANGES = 0x00000400;
+
+    public const uint SDC_PATH_PERSIST_IF_REQUIRED = 0x00000800;
+    public const uint SDC_FORCE_MODE_ENUMERATION = 0x00001000;
+    public const uint SDC_ALLOW_PATH_ORDER_CHANGES = 0x00002000;
+    public const uint SDC_VIRTUAL_MODE_AWARE = 0x00008000;
+
     // --- Window messages ---------------------------------------------------
     public const int WM_DISPLAYCHANGE = 0x007E;
     public const int WM_DEVICECHANGE = 0x0219;
@@ -87,6 +116,34 @@ internal static class NativeMethods
         ref uint numModeInfoArrayElements,
         [Out] DISPLAYCONFIG_MODE_INFO[] modeInfoArray,
         IntPtr currentTopologyId);
+
+    /// <summary>
+    /// The QDC_DATABASE_CURRENT form, which needs a real pointer for the topology id rather than
+    /// null. Reading the stored configuration is how persistence can be checked without rebooting.
+    /// </summary>
+    [DllImport(User32, ExactSpelling = true)]
+    internal static extern int QueryDisplayConfig(
+        uint flags,
+        ref uint numPathArrayElements,
+        [Out] DISPLAYCONFIG_PATH_INFO[] pathArray,
+        ref uint numModeInfoArrayElements,
+        [Out] DISPLAYCONFIG_MODE_INFO[] modeInfoArray,
+        out uint currentTopologyId);
+
+    /// <summary>
+    /// Applies and optionally saves a display configuration. Returns a Win32 error code.
+    /// </summary>
+    /// <remarks>
+    /// Passing zero counts with null arrays is legal when the flags name a stored topology instead
+    /// of a supplied configuration.
+    /// </remarks>
+    [DllImport(User32, ExactSpelling = true)]
+    internal static extern int SetDisplayConfig(
+        uint numPathArrayElements,
+        [In] DISPLAYCONFIG_PATH_INFO[]? pathArray,
+        uint numModeInfoArrayElements,
+        [In] DISPLAYCONFIG_MODE_INFO[]? modeInfoArray,
+        uint flags);
 
     // DisplayConfigGetDeviceInfo takes a DISPLAYCONFIG_DEVICE_INFO_HEADER* whose real type is
     // decided by header.type. Overloading per struct is the safe way to express that: each

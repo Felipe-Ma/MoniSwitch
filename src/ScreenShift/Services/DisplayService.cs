@@ -272,6 +272,15 @@ public sealed class DisplayService : IDisplayService
             return ApplyResult.Fail($"Windows refused the change ({push.Error}).", rolledBack);
         }
 
+        // Applying and saving are separate operations that fail independently, so the save is a
+        // deliberate second step. A change that applied but did not save is still a success from
+        // the user's point of view — it just will not survive a reboot — so this never fails the apply.
+        var persisted = PersistCurrentConfiguration();
+        if (!persisted.Succeeded)
+        {
+            _logger.Warn($"Applied, but the configuration could not be saved: {persisted.Message} It will not survive a reboot.");
+        }
+
         _logger.Info("Apply committed successfully.");
         return ApplyResult.Ok();
     }
@@ -394,6 +403,38 @@ public sealed class DisplayService : IDisplayService
     /// </remarks>
     public ApplyResult PersistCurrentConfiguration()
     {
+        // The CCD database is what Windows 11 actually reads when it builds the desktop at boot.
+        // Re-applying the live configuration through SetDisplayConfig with SDC_SAVE_TO_DATABASE
+        // writes it there. Applying a configuration identical to the current one is not a visible
+        // change, so this costs nothing on screen.
+        try
+        {
+            var active = _api.Query(NativeConstants.QDC_ONLY_ACTIVE_PATHS);
+
+            if (active.Paths.Length > 0)
+            {
+                var flags = NativeConstants.SDC_APPLY
+                    | NativeConstants.SDC_USE_SUPPLIED_DISPLAY_CONFIG
+                    | NativeConstants.SDC_SAVE_TO_DATABASE;
+
+                var rc = _api.SetConfiguration(active, flags);
+
+                if (rc == NativeConstants.ERROR_SUCCESS)
+                {
+                    _logger.Info("Saved the current configuration to the CCD display database.");
+                    return ApplyResult.Ok();
+                }
+
+                _logger.Warn($"SetDisplayConfig(SAVE_TO_DATABASE) failed with {rc} ({DisplayConfigException.DescribeError(rc)}); falling back to the legacy registry path.");
+            }
+        }
+        catch (DisplayConfigException ex)
+        {
+            _logger.Warn($"Could not read the active configuration to persist it: {ex.Message}");
+        }
+
+        // Legacy fallback. Older Windows builds do keep display settings in the registry keys that
+        // ChangeDisplaySettingsEx writes, so this is still worth trying when the CCD path refuses.
         var modes = new Dictionary<string, DEVMODE>(StringComparer.OrdinalIgnoreCase);
         string? primaryDevice = null;
 
@@ -486,6 +527,14 @@ public sealed class DisplayService : IDisplayService
         {
             _logger.Error($"Restore failed: {push.Error}.");
             return false;
+        }
+
+        // A revert that does not stick is barely a revert: without this the reverted-from
+        // configuration would still be the one waiting after a reboot.
+        var persisted = PersistCurrentConfiguration();
+        if (!persisted.Succeeded)
+        {
+            _logger.Warn($"Restored, but the configuration could not be saved: {persisted.Message}");
         }
 
         return true;

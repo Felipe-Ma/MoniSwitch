@@ -341,13 +341,6 @@
                                               IsEnabled="{Binding CanBecomePrimary}"
                                               Margin="0,16,0,0" />
 
-                                    <TextBlock Style="{StaticResource Text.Faint}"
-                                               Foreground="{StaticResource Brush.Danger}"
-                                               TextWrapping="Wrap"
-                                               Margin="26,6,0,0"
-                                               Visibility="{Binding CanBecomePrimary, Converter={StaticResource BoolToVis}}"
-                                               Text="Applies correctly, but may not survive a reboot on Windows 11 — see the Phase 2 notes in the README." />
-
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
                                         <Button Content="Reset"
                                                 Style="{StaticResource Button.Ghost}"

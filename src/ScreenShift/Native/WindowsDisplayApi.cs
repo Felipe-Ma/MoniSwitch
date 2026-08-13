@@ -117,6 +117,80 @@ internal sealed class WindowsDisplayApi
     }
 
     /// <summary>
+    /// Reads the configuration Windows has stored for the currently connected set of monitors —
+    /// that is, what the desktop will look like after the next reboot.
+    /// </summary>
+    /// <remarks>
+    /// QDC_DATABASE_CURRENT is the one query flag that insists on a real pointer for the topology
+    /// id; passing null fails with ERROR_INVALID_PARAMETER.
+    /// </remarks>
+    public DisplayConfigSnapshot QueryDatabase(out uint topologyId)
+    {
+        topologyId = 0;
+
+        for (var attempt = 1; attempt <= MaxQueryAttempts; attempt++)
+        {
+            // GetDisplayConfigBufferSizes rejects QDC_DATABASE_CURRENT outright, so the buffers are
+            // sized against QDC_ALL_PATHS instead. That is an over-estimate, which is fine: the
+            // query lowers the counts to what it actually wrote.
+            var rc = NativeMethods.GetDisplayConfigBufferSizes(
+                NativeConstants.QDC_ALL_PATHS, out var pathCount, out var modeCount);
+
+            if (rc != NativeConstants.ERROR_SUCCESS)
+            {
+                throw new DisplayConfigException("GetDisplayConfigBufferSizes(for QDC_DATABASE_CURRENT)", rc);
+            }
+
+            if (pathCount == 0)
+            {
+                return DisplayConfigSnapshot.Empty;
+            }
+
+            var paths = new DISPLAYCONFIG_PATH_INFO[pathCount];
+            var modes = new DISPLAYCONFIG_MODE_INFO[Math.Max(modeCount, 1)];
+
+            // QDC_DATABASE_CURRENT is a modifier, not a mode of its own: it has to be combined with
+            // QDC_ONLY_ACTIVE_PATHS, and it is the one query flag that requires a real topology-id
+            // pointer rather than null.
+            rc = NativeMethods.QueryDisplayConfig(
+                NativeConstants.QDC_DATABASE_CURRENT | NativeConstants.QDC_ONLY_ACTIVE_PATHS,
+                ref pathCount, paths, ref modeCount, modes, out topologyId);
+
+            if (rc == NativeConstants.ERROR_SUCCESS)
+            {
+                Array.Resize(ref paths, (int)pathCount);
+                Array.Resize(ref modes, (int)modeCount);
+                return new DisplayConfigSnapshot(paths, modes);
+            }
+
+            if (rc != NativeConstants.ERROR_INSUFFICIENT_BUFFER)
+            {
+                throw new DisplayConfigException("QueryDisplayConfig(QDC_DATABASE_CURRENT)", rc);
+            }
+        }
+
+        throw new DisplayConfigException("QueryDisplayConfig(QDC_DATABASE_CURRENT)", NativeConstants.ERROR_INSUFFICIENT_BUFFER);
+    }
+
+    /// <summary>
+    /// Applies a configuration through the CCD API, optionally writing it to the persistence
+    /// database so it survives a reboot.
+    /// </summary>
+    /// <returns>ERROR_SUCCESS, or a Win32 error code.</returns>
+    public int SetConfiguration(DisplayConfigSnapshot configuration, uint flags)
+    {
+        var result = NativeMethods.SetDisplayConfig(
+            (uint)configuration.Paths.Length,
+            configuration.Paths,
+            (uint)configuration.Modes.Length,
+            configuration.Modes,
+            flags);
+
+        _logger.Debug($"SetDisplayConfig({configuration.Paths.Length} path(s), flags=0x{flags:X}) -> {result} ({DisplayConfigException.DescribeError(result)}).");
+        return result;
+    }
+
+    /// <summary>
     /// Looks up the monitor's EDID name and stable device path.
     /// Returns false for targets that have no name to give (some virtual/indirect displays), which
     /// is a normal condition rather than a failure.

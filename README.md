@@ -3,8 +3,9 @@
 A lightweight Windows monitor profile manager. Save display layouts and switch between them in one
 click, without opening Settings.
 
-Built to the spec in [AGENTS.md](AGENTS.md). **Phase 1 (detection) is complete. Phase 2 (changing
-resolution, refresh rate and primary display) works, with one caveat — see Persistence below.**
+Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 and 2 are complete**: monitors are detected
+and shown, and resolution, refresh rate and primary display can be changed, with changes saved so
+they survive a reboot.
 
 ## Requirements
 
@@ -39,23 +40,36 @@ dotnet build ScreenShift.sln
 dotnet run --project src/ScreenShift/ScreenShift.csproj
 ```
 
-## Persistence: a known limitation
+## How changes are applied and saved
 
-Applying a mode and *saving* it are separate operations, and on Windows 11 they use different APIs.
+Applying a display mode and *saving* it are separate operations, and on Windows 11 they belong to
+different APIs. Treating them as one thing is what made early versions of this lose changes.
 
-ScreenShift currently changes modes through the GDI path (`ChangeDisplaySettingsEx`), which persists
-by passing `CDS_UPDATEREGISTRY`. On the machine this was developed against that flag is refused —
-and `EnumDisplaySettingsEx(ENUM_REGISTRY_SETTINGS)` fails for every display, which says Windows has
-no legacy GDI configuration saved at all. Modern Windows persists display configuration through the
-**CCD display database** (`SetDisplayConfig` with `SDC_SAVE_TO_DATABASE`) instead.
+**Applying** goes through GDI (`ChangeDisplaySettingsEx`), because that is the API that can apply a
+driver-enumerated mode by value. It tries three strategies in order, so a change still takes effect
+when a stricter one is refused:
 
-So changes apply correctly and are visible immediately, but may not survive a reboot. The apply path
-falls back through three strategies — staged batch, then per display, then dynamic without the
-registry write — so a change always takes effect even when it cannot be saved, and the rollback path
-uses the same chain.
+1. Stage every display, then commit them together — one clean switch.
+2. Apply each display on its own, persisting through the legacy registry path.
+3. Apply each display dynamically, without the registry write.
 
-Moving the apply path onto `SetDisplayConfig` is the next piece of work, and it is a prerequisite for
-Phase 3 (enabling and disabling monitors) regardless, since topology changes need the CCD API anyway.
+The display designated primary is always written first, because Windows requires a primary anchored
+at the desktop origin and moving anything else before that anchor exists leaves the configuration
+momentarily without one.
+
+**Saving** goes through the CCD API (`SetDisplayConfig` with `SDC_SAVE_TO_DATABASE`). Windows 11
+keeps display configuration in the CCD database, not the registry keys GDI writes to — on the
+machine this was developed against, `EnumDisplaySettingsEx(ENUM_REGISTRY_SETTINGS)` fails for every
+display, meaning there is no legacy configuration stored at all. So after every successful apply
+*and* every successful revert, the resulting configuration is re-applied through CCD with
+`SDC_SAVE_TO_DATABASE` to write it where Windows will actually read it.
+
+A failed save never fails the apply. A change that took effect but will not survive a reboot is
+still better than no change, and it is logged as such.
+
+One thing worth knowing: when the CCD database is out of sync with what is on screen, the GDI path
+starts refusing writes — including reverts. That is what the layered fallback protects against, and
+keeping the database current after every change is what stops the situation arising.
 
 ## Checking detection
 
@@ -90,6 +104,13 @@ hand:
 dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --set 1 --refresh 180 --primary
 ```
 
+`--persist` writes whatever is on screen to the display database, which is the repair for a
+configuration that applied but did not save:
+
+```bash
+dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --persist
+```
+
 ## Logs
 
 Everything, including every display API failure with the adapter and target ids that caused it,
@@ -106,7 +127,7 @@ Logs older than seven days are deleted at startup.
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Detect monitors, show them in the UI | Done |
-| 2 | Change resolution, refresh rate, primary | Works; does not reliably persist |
+| 2 | Change resolution, refresh rate, primary | Done |
 | 3 | Enable/disable monitors, topology switching | Not started |
 | 4 | Save and load profiles | Not started |
 | 5 | One-click apply with rollback | Not started |
