@@ -186,7 +186,7 @@ if (captureIndex >= 0)
         return 2;
     }
 
-    return WindowCapture.Run(args[captureIndex + 1], width: 1280, height: 1000);
+    return WindowCapture.Run(args[captureIndex + 1], width: 1280, height: 1300);
 }
 
 var logger = new ConsoleLogger();

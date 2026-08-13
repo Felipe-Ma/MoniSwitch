@@ -419,9 +419,18 @@
                                     </ComboBox>
 
                                     <TextBlock Text="Orientation" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
+                                    <!-- Explicit ItemTemplate rather than DisplayMemberPath: the
+                                         selection box provably honours ItemTemplate (the refresh
+                                         rate picker relies on it), so the label can never regress
+                                         to the record's ToString(). -->
                                     <ComboBox ItemsSource="{Binding AvailableOrientations}"
-                                              SelectedItem="{Binding SelectedOrientation, Mode=TwoWay}"
-                                              DisplayMemberPath="Label" />
+                                              SelectedItem="{Binding SelectedOrientation, Mode=TwoWay}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Label}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
 
                                     <CheckBox Content="Make this the primary display"
                                               IsChecked="{Binding MakePrimary, Mode=TwoWay}"

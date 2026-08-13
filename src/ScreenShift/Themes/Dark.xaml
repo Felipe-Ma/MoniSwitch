@@ -150,8 +150,13 @@
                             </ToggleButton.Template>
                         </ToggleButton>
 
+                        <!-- All four content bindings, matching the stock template. Leaving out the
+                             selector/format ones makes the selection box fall back to ToString()
+                             for items displayed via DisplayMemberPath. -->
                         <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
                                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                          ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
                                           Margin="{TemplateBinding Padding}"
                                           VerticalAlignment="Center"
                                           HorizontalAlignment="Left"
