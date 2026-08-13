@@ -1,0 +1,256 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using ScreenShift.Services;
+
+namespace ScreenShift.Native;
+
+/// <summary>Raised when a display configuration API fails in a way the caller cannot paper over.</summary>
+public sealed class DisplayConfigException : Exception
+{
+    public DisplayConfigException(string operation, int errorCode)
+        : base($"{operation} failed with Win32 error {errorCode} ({DescribeError(errorCode)}).")
+    {
+        Operation = operation;
+        ErrorCode = errorCode;
+    }
+
+    public string Operation { get; }
+
+    public int ErrorCode { get; }
+
+    internal static string DescribeError(int code) => code switch
+    {
+        NativeConstants.ERROR_ACCESS_DENIED => "ERROR_ACCESS_DENIED",
+        NativeConstants.ERROR_GEN_FAILURE => "ERROR_GEN_FAILURE",
+        NativeConstants.ERROR_NOT_SUPPORTED => "ERROR_NOT_SUPPORTED",
+        NativeConstants.ERROR_INVALID_PARAMETER => "ERROR_INVALID_PARAMETER",
+        NativeConstants.ERROR_INSUFFICIENT_BUFFER => "ERROR_INSUFFICIENT_BUFFER",
+        _ => new Win32Exception(code).Message,
+    };
+}
+
+/// <summary>A consistent pair of path and mode arrays, as returned by one QueryDisplayConfig call.</summary>
+internal sealed class DisplayConfigSnapshot
+{
+    public DisplayConfigSnapshot(DISPLAYCONFIG_PATH_INFO[] paths, DISPLAYCONFIG_MODE_INFO[] modes)
+    {
+        Paths = paths;
+        Modes = modes;
+    }
+
+    public DISPLAYCONFIG_PATH_INFO[] Paths { get; }
+
+    public DISPLAYCONFIG_MODE_INFO[] Modes { get; }
+
+    public static DisplayConfigSnapshot Empty { get; } = new([], []);
+}
+
+/// <summary>
+/// The only place in the app that talks to user32's display APIs. Everything it returns is still
+/// shaped like the native data — turning that into friendly models is <see cref="Services.DisplayService"/>'s job.
+/// </summary>
+[SupportedOSPlatform("windows")]
+internal sealed class WindowsDisplayApi
+{
+    /// <summary>
+    /// The topology can change between sizing the buffers and filling them (hot-plug, GPU reset,
+    /// a laptop lid closing). Windows reports that as ERROR_INSUFFICIENT_BUFFER and expects a retry.
+    /// </summary>
+    private const int MaxQueryAttempts = 5;
+
+    private readonly IAppLogger _logger;
+
+    public WindowsDisplayApi(IAppLogger logger)
+    {
+        _logger = logger;
+        NativeStructLayout.Verify();
+    }
+
+    /// <summary>
+    /// Reads the current display configuration.
+    /// </summary>
+    /// <param name="flags">
+    /// QDC_ONLY_ACTIVE_PATHS for just what is lit up, or QDC_ALL_PATHS to also see connected
+    /// monitors that are currently switched off.
+    /// </param>
+    public DisplayConfigSnapshot Query(uint flags)
+    {
+        for (var attempt = 1; attempt <= MaxQueryAttempts; attempt++)
+        {
+            var rc = NativeMethods.GetDisplayConfigBufferSizes(flags, out var pathCount, out var modeCount);
+            if (rc != NativeConstants.ERROR_SUCCESS)
+            {
+                throw new DisplayConfigException("GetDisplayConfigBufferSizes", rc);
+            }
+
+            if (pathCount == 0)
+            {
+                _logger.Warn($"GetDisplayConfigBufferSizes reported 0 paths for flags 0x{flags:X}.");
+                return DisplayConfigSnapshot.Empty;
+            }
+
+            var paths = new DISPLAYCONFIG_PATH_INFO[pathCount];
+            var modes = new DISPLAYCONFIG_MODE_INFO[Math.Max(modeCount, 1)];
+
+            rc = NativeMethods.QueryDisplayConfig(flags, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero);
+
+            if (rc == NativeConstants.ERROR_SUCCESS)
+            {
+                // The counts come back reduced to what was actually written; anything past them is stale.
+                Array.Resize(ref paths, (int)pathCount);
+                Array.Resize(ref modes, (int)modeCount);
+
+                _logger.Debug($"QueryDisplayConfig(0x{flags:X}) returned {pathCount} path(s), {modeCount} mode(s) on attempt {attempt}.");
+                return new DisplayConfigSnapshot(paths, modes);
+            }
+
+            if (rc != NativeConstants.ERROR_INSUFFICIENT_BUFFER)
+            {
+                throw new DisplayConfigException("QueryDisplayConfig", rc);
+            }
+
+            _logger.Warn($"QueryDisplayConfig(0x{flags:X}) hit ERROR_INSUFFICIENT_BUFFER on attempt {attempt}; the topology changed mid-query. Retrying.");
+        }
+
+        throw new DisplayConfigException("QueryDisplayConfig", NativeConstants.ERROR_INSUFFICIENT_BUFFER);
+    }
+
+    /// <summary>
+    /// Looks up the monitor's EDID name and stable device path.
+    /// Returns false for targets that have no name to give (some virtual/indirect displays), which
+    /// is a normal condition rather than a failure.
+    /// </summary>
+    public bool TryGetTargetDeviceName(LUID adapterId, uint targetId, out DISPLAYCONFIG_TARGET_DEVICE_NAME result)
+    {
+        result = new DISPLAYCONFIG_TARGET_DEVICE_NAME
+        {
+            header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+            {
+                type = DISPLAYCONFIG_DEVICE_INFO_TYPE.GetTargetName,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_TARGET_DEVICE_NAME>(),
+                adapterId = adapterId,
+                id = targetId,
+            },
+        };
+
+        var rc = NativeMethods.DisplayConfigGetDeviceInfo(ref result);
+        if (rc == NativeConstants.ERROR_SUCCESS)
+        {
+            return true;
+        }
+
+        _logger.Warn($"DisplayConfigGetDeviceInfo(GET_TARGET_NAME) failed for adapter {adapterId} target {targetId}: {rc} ({DisplayConfigException.DescribeError(rc)}).");
+        return false;
+    }
+
+    /// <summary>Looks up the GDI device name (<c>\\.\DISPLAYn</c>) behind a source id.</summary>
+    /// <remarks>
+    /// Inactive sources legitimately have no GDI name, so a failure here is logged at debug level
+    /// and the caller falls back to showing nothing.
+    /// </remarks>
+    public bool TryGetSourceDeviceName(LUID adapterId, uint sourceId, out string gdiDeviceName)
+    {
+        var request = new DISPLAYCONFIG_SOURCE_DEVICE_NAME
+        {
+            header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+            {
+                type = DISPLAYCONFIG_DEVICE_INFO_TYPE.GetSourceName,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(),
+                adapterId = adapterId,
+                id = sourceId,
+            },
+            viewGdiDeviceName = string.Empty,
+        };
+
+        var rc = NativeMethods.DisplayConfigGetDeviceInfo(ref request);
+        if (rc == NativeConstants.ERROR_SUCCESS)
+        {
+            gdiDeviceName = request.viewGdiDeviceName ?? string.Empty;
+            return gdiDeviceName.Length > 0;
+        }
+
+        _logger.Debug($"DisplayConfigGetDeviceInfo(GET_SOURCE_NAME) failed for adapter {adapterId} source {sourceId}: {rc} ({DisplayConfigException.DescribeError(rc)}).");
+        gdiDeviceName = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// Looks up the adapter's device path. The adapter LUID is only unique within a boot session,
+    /// so this path is what lets a saved profile still recognise the GPU after a reboot or driver update.
+    /// </summary>
+    public bool TryGetAdapterDevicePath(LUID adapterId, out string adapterDevicePath)
+    {
+        var request = new DISPLAYCONFIG_ADAPTER_NAME
+        {
+            header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+            {
+                type = DISPLAYCONFIG_DEVICE_INFO_TYPE.GetAdapterName,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_ADAPTER_NAME>(),
+                adapterId = adapterId,
+                id = 0,
+            },
+            adapterDevicePath = string.Empty,
+        };
+
+        var rc = NativeMethods.DisplayConfigGetDeviceInfo(ref request);
+        if (rc == NativeConstants.ERROR_SUCCESS)
+        {
+            adapterDevicePath = request.adapterDevicePath ?? string.Empty;
+            return adapterDevicePath.Length > 0;
+        }
+
+        _logger.Debug($"DisplayConfigGetDeviceInfo(GET_ADAPTER_NAME) failed for adapter {adapterId}: {rc} ({DisplayConfigException.DescribeError(rc)}).");
+        adapterDevicePath = string.Empty;
+        return false;
+    }
+}
+
+/// <summary>
+/// Checks the marshalled size of every native struct against the size the Windows headers define.
+/// A mismatch means the runtime would hand user32 a differently shaped buffer than it expects, and
+/// the symptom of that is plausible-looking garbage rather than an error code — so it is worth
+/// failing loudly at startup instead.
+/// </summary>
+internal static class NativeStructLayout
+{
+    private static bool _verified;
+
+    public static void Verify()
+    {
+        if (_verified)
+        {
+            return;
+        }
+
+        Expect<LUID>(8);
+        Expect<POINTL>(8);
+        Expect<RECTL>(16);
+        Expect<DISPLAYCONFIG_RATIONAL>(8);
+        Expect<DISPLAYCONFIG_2DREGION>(8);
+        Expect<DISPLAYCONFIG_PATH_SOURCE_INFO>(20);
+        Expect<DISPLAYCONFIG_PATH_TARGET_INFO>(48);
+        Expect<DISPLAYCONFIG_PATH_INFO>(72);
+        Expect<DISPLAYCONFIG_VIDEO_SIGNAL_INFO>(48);
+        Expect<DISPLAYCONFIG_TARGET_MODE>(48);
+        Expect<DISPLAYCONFIG_SOURCE_MODE>(20);
+        Expect<DISPLAYCONFIG_DESKTOP_IMAGE_INFO>(40);
+        Expect<DISPLAYCONFIG_MODE_INFO>(64);
+        Expect<DISPLAYCONFIG_DEVICE_INFO_HEADER>(20);
+        Expect<DISPLAYCONFIG_TARGET_DEVICE_NAME>(420);
+        Expect<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(84);
+        Expect<DISPLAYCONFIG_ADAPTER_NAME>(276);
+
+        _verified = true;
+    }
+
+    private static void Expect<T>(int expectedSize) where T : struct
+    {
+        var actual = Marshal.SizeOf<T>();
+        if (actual != expectedSize)
+        {
+            throw new InvalidOperationException(
+                $"P/Invoke layout error: {typeof(T).Name} marshals to {actual} bytes but Windows expects {expectedSize}.");
+        }
+    }
+}

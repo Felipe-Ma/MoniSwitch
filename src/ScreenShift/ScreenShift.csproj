@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ScreenShift</AssemblyName>
+    <RootNamespace>ScreenShift</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!--
+      Plain net8.0-windows rather than net8.0-windows10.0.x: everything here goes through
+      P/Invoke to user32/dwmapi, so the WinRT projections a Windows SDK version would pull in
+      would be dead weight. [SupportedOSPlatform("windows")] on the native types is what keeps
+      the platform-compatibility analyzer satisfied.
+    -->
+  </PropertyGroup>
+
+</Project>
