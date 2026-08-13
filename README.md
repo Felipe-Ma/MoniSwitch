@@ -3,9 +3,10 @@
 A lightweight Windows monitor profile manager. Save display layouts and switch between them in one
 click, without opening Settings.
 
-Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 to 3 are complete**: monitors are detected
-and shown, they can be switched on and off, and resolution, refresh rate, orientation, position and
-primary display can all be changed — with every change saved so it survives a reboot.
+Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 to 5 are complete**: monitors are detected
+and shown, everything about them can be changed (on/off, resolution, refresh rate, orientation,
+position, primary), and named profiles capture whole layouts and bring them back with one click —
+protected by a 15-second automatic revert if the result is unusable.
 
 ## Requirements
 
@@ -101,6 +102,30 @@ having to look at it:
 dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --capture window.png
 ```
 
+## Profiles
+
+Profiles live in `%APPDATA%\ScreenShift\profiles.json` — human-readable, one entry per monitor,
+saved atomically (write-then-move) so a crash can never leave the file half-written. A corrupt file
+is set aside under a `.corrupt-<timestamp>` name rather than silently discarded.
+
+A profile stores desired state, not commands: applying one diffs it against what is on screen and
+requests only the differences, so applying a profile twice is a no-op, and "nothing to change"
+doubles as "this profile is active".
+
+Saved monitors are matched back to hardware in three passes, strictest first:
+
+1. **Device path** — monitor plus port. Survives reboots and keeps identical monitors apart.
+2. **Adapter path + connector id** — covers a device path that changed shape.
+3. **EDID model** — the monitor moved ports. Only taken when exactly one candidate and one saved
+   entry want each other; with two identical monitors both moved, any pairing would be a guess, and
+   guessing would hand the portrait settings to the landscape monitor. Ambiguity is skipped and
+   reported instead.
+
+A monitor that is connected but not in the profile is left untouched. A saved monitor that is not
+connected is skipped with a warning. Applying is protected by the same 15-second revert as manual
+changes — and the revert prompt defaults to *revert*, so a user who cannot see anything gets their
+old configuration back by doing nothing.
+
 ## Testing display changes
 
 These write to the live display configuration. `--test-apply` always targets a non-primary display
@@ -124,6 +149,24 @@ configuration that applied but did not save:
 dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --persist
 ```
 
+Profiles have their own commands, sharing the app's profiles.json. `--profile-apply` verifies
+itself: after applying it re-plans the profile and reports whether the live state matches.
+
+```bash
+dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --profile-save Baseline
+```
+
+```bash
+dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --profile-apply Baseline
+```
+
+`--test-dialog` shows the real keep/revert prompt and passes only if it times out into "revert" —
+the path that rescues a user who cannot see anything:
+
+```bash
+dotnet run --project tools/ScreenShift.Probe/ScreenShift.Probe.csproj -- --test-dialog 4
+```
+
 ## Logs
 
 Everything, including every display API failure with the adapter and target ids that caused it,
@@ -142,6 +185,6 @@ Logs older than seven days are deleted at startup.
 | 1 | Detect monitors, show them in the UI | Done |
 | 2 | Change resolution, refresh rate, primary | Done |
 | 3 | Enable/disable monitors, topology switching | Done |
-| 4 | Save and load profiles | Not started |
-| 5 | One-click apply with rollback | Not started |
+| 4 | Save and load profiles | Done |
+| 5 | One-click apply with rollback | Done |
 | 6 | Tray icon, global hotkeys, polish | Not started |

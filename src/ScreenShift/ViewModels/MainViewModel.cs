@@ -23,7 +23,8 @@ public sealed class MainViewModel : ObservableObject
     private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(700);
 
     private readonly IDisplayService _displayService;
-    private readonly IUserConfirmation _confirmation;
+    private readonly DisplayProfileService _profileService;
+    private readonly IUserInteraction _interaction;
     private readonly IAppLogger _logger;
 
     private bool _isApplying;
@@ -36,15 +37,23 @@ public sealed class MainViewModel : ObservableObject
     private double _viewportHeight;
     private string _virtualDesktopText = "—";
 
-    public MainViewModel(IDisplayService displayService, IUserConfirmation confirmation, IAppLogger logger)
+    public MainViewModel(
+        IDisplayService displayService,
+        DisplayProfileService profileService,
+        IUserInteraction interaction,
+        IAppLogger logger)
     {
         _displayService = displayService;
-        _confirmation = confirmation;
+        _profileService = profileService;
+        _interaction = interaction;
         _logger = logger;
 
         RefreshCommand = new RelayCommand(Refresh, () => !_isRefreshing && !_isApplying);
         ApplyCommand = new RelayCommand(ApplyChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
         ResetCommand = new RelayCommand(ResetChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
+        SaveProfileCommand = new RelayCommand(SaveCurrentAsProfile, () => !_isApplying);
+
+        LoadProfiles();
     }
 
     /// <summary>Every connected monitor, enabled first.</summary>
@@ -53,7 +62,14 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>The subset drawn on the layout canvas. Disabled monitors have no rectangle to draw.</summary>
     public ObservableCollection<MonitorViewModel> EnabledMonitors { get; } = [];
 
+    /// <summary>Saved display layouts, in profiles.json order.</summary>
+    public ObservableCollection<ProfileViewModel> Profiles { get; } = [];
+
+    public bool HasProfiles => Profiles.Count > 0;
+
     public RelayCommand RefreshCommand { get; }
+
+    public RelayCommand SaveProfileCommand { get; }
 
     public RelayCommand ApplyCommand { get; }
 
@@ -217,13 +233,25 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Applies the selected monitor's pending changes, then asks the user to confirm them before
-    /// the deadline runs out.
-    /// </summary>
-    private async void ApplyChanges()
+    /// <summary>Applies the selected monitor's pending changes through the confirmation flow.</summary>
+    private void ApplyChanges()
     {
-        if (_isApplying || SelectedMonitor is not { } monitor || monitor.BuildRequest() is not { } request)
+        if (SelectedMonitor?.BuildRequest() is { } request)
+        {
+            _ = RunApplyAsync([request], request.ToString(), $"Applied at {DateTime.Now:HH:mm:ss}");
+        }
+    }
+
+    /// <summary>
+    /// The pipeline every kind of change goes through: snapshot, apply, let the user confirm before
+    /// the deadline, restore if they decline or cannot answer.
+    /// </summary>
+    private async Task RunApplyAsync(
+        IReadOnlyList<MonitorChangeRequest> requests,
+        string confirmationSummary,
+        string appliedStatus)
+    {
+        if (_isApplying || requests.Count == 0)
         {
             return;
         }
@@ -237,7 +265,7 @@ public sealed class MainViewModel : ObservableObject
             // even if the apply succeeds and the result turns out to be unusable.
             var snapshot = _displayService.CaptureSnapshot();
 
-            var result = await Task.Run(() => _displayService.Apply([request]));
+            var result = await Task.Run(() => _displayService.Apply(requests));
 
             if (!result.Succeeded)
             {
@@ -248,19 +276,19 @@ public sealed class MainViewModel : ObservableObject
                 }
 
                 _logger.Warn($"Apply failed: {detail}");
-                _confirmation.ShowError("Could not apply the change", detail);
+                _interaction.ShowError("Could not apply the change", detail);
                 StatusText = "The change was rejected.";
                 return;
             }
 
             await Task.Delay(SettleDelay);
 
-            var keep = _confirmation.ConfirmDisplayChange(request.ToString(), RollbackTimeout);
+            var keep = _interaction.ConfirmDisplayChange(confirmationSummary, RollbackTimeout);
 
             if (keep)
             {
                 _logger.Info("User kept the new display settings.");
-                StatusText = $"Applied at {DateTime.Now:HH:mm:ss}";
+                StatusText = appliedStatus;
                 return;
             }
 
@@ -274,7 +302,7 @@ public sealed class MainViewModel : ObservableObject
             else
             {
                 StatusText = "Revert failed — see the log.";
-                _confirmation.ShowError(
+                _interaction.ShowError(
                     "Revert failed",
                     restored.Message ?? "The previous display configuration could not be fully restored.");
             }
@@ -282,7 +310,7 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.Error("Applying display changes threw.", ex);
-            _confirmation.ShowError("Could not apply the change", ex.Message);
+            _interaction.ShowError("Could not apply the change", ex.Message);
             StatusText = "The change failed.";
         }
         finally
@@ -290,6 +318,172 @@ public sealed class MainViewModel : ObservableObject
             // Clear the flag before refreshing: Refresh deliberately no-ops while applying.
             IsApplying = false;
             Refresh();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Profiles
+    // ------------------------------------------------------------------
+
+    private void LoadProfiles()
+    {
+        Profiles.Clear();
+
+        foreach (var profile in _profileService.Profiles)
+        {
+            Profiles.Add(new ProfileViewModel(
+                profile,
+                ApplyProfile,
+                RenameProfile,
+                UpdateProfile,
+                DuplicateProfile,
+                DeleteProfile,
+                () => !_isApplying));
+        }
+
+        OnPropertyChanged(nameof(HasProfiles));
+    }
+
+    private void SaveCurrentAsProfile()
+    {
+        var name = _interaction.PromptForText("Save profile", "Name for the current display configuration:", "New profile");
+        if (name is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var profile = _profileService.SaveCurrentAs(name);
+            LoadProfiles();
+            StatusText = $"Saved profile \"{profile.Name}\".";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Saving a profile failed.", ex);
+            _interaction.ShowError("Could not save the profile", ex.Message);
+        }
+    }
+
+    private void ApplyProfile(ProfileViewModel profile)
+    {
+        if (_isApplying)
+        {
+            return;
+        }
+
+        ProfilePlan plan;
+        try
+        {
+            plan = _profileService.BuildPlan(profile.Model);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Planning profile \"{profile.Name}\" failed.", ex);
+            _interaction.ShowError("Could not apply the profile", ex.Message);
+            return;
+        }
+
+        foreach (var warning in plan.Warnings)
+        {
+            _logger.Warn($"Profile \"{profile.Name}\": {warning}");
+        }
+
+        if (!plan.HasWork)
+        {
+            // No requests plus warnings means nothing usable matched — very different news from
+            // "everything already matches", so the two get different treatment.
+            if (plan.Warnings.Count > 0)
+            {
+                _interaction.ShowError(
+                    $"Profile \"{profile.Name}\"",
+                    string.Join("\n", plan.Warnings) + "\n\nNothing was changed.");
+            }
+            else
+            {
+                StatusText = $"Profile \"{profile.Name}\" is already active.";
+            }
+
+            return;
+        }
+
+        _ = RunApplyAsync(plan.Requests, plan.Summary(), $"Applied profile \"{profile.Name}\".");
+    }
+
+    private void RenameProfile(ProfileViewModel profile)
+    {
+        var name = _interaction.PromptForText("Rename profile", $"New name for \"{profile.Name}\":", profile.Name);
+        if (name is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _profileService.Rename(profile.Model.Id, name);
+            LoadProfiles();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Renaming a profile failed.", ex);
+            _interaction.ShowError("Could not rename the profile", ex.Message);
+        }
+    }
+
+    private void UpdateProfile(ProfileViewModel profile)
+    {
+        if (!_interaction.ConfirmAction(
+                "Update profile",
+                $"Overwrite \"{profile.Name}\" with the current display configuration?"))
+        {
+            return;
+        }
+
+        try
+        {
+            _profileService.UpdateFromCurrent(profile.Model.Id);
+            LoadProfiles();
+            StatusText = $"Updated \"{profile.Name}\" from the current configuration.";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Updating a profile failed.", ex);
+            _interaction.ShowError("Could not update the profile", ex.Message);
+        }
+    }
+
+    private void DuplicateProfile(ProfileViewModel profile)
+    {
+        try
+        {
+            var copy = _profileService.Duplicate(profile.Model.Id);
+            LoadProfiles();
+            StatusText = $"Duplicated to \"{copy.Name}\".";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Duplicating a profile failed.", ex);
+            _interaction.ShowError("Could not duplicate the profile", ex.Message);
+        }
+    }
+
+    private void DeleteProfile(ProfileViewModel profile)
+    {
+        if (!_interaction.ConfirmAction("Delete profile", $"Delete \"{profile.Name}\"? This cannot be undone."))
+        {
+            return;
+        }
+
+        try
+        {
+            _profileService.Delete(profile.Model.Id);
+            LoadProfiles();
+            StatusText = $"Deleted \"{profile.Name}\".";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Deleting a profile failed.", ex);
+            _interaction.ShowError("Could not delete the profile", ex.Message);
         }
     }
 
@@ -326,6 +520,12 @@ public sealed class MainViewModel : ObservableObject
     {
         ApplyCommand.RaiseCanExecuteChanged();
         ResetCommand.RaiseCanExecuteChanged();
+        SaveProfileCommand.RaiseCanExecuteChanged();
+
+        foreach (var profile in Profiles)
+        {
+            profile.RaiseCanExecuteChanged();
+        }
     }
 
     /// <summary>Called by the view whenever the layout canvas is resized.</summary>

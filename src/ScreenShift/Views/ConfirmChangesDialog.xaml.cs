@@ -122,18 +122,24 @@ public partial class ConfirmChangesDialog : Window
     }
 }
 
-/// <summary>Wires the dialog up to the view models without letting them reference a window.</summary>
-public sealed class DialogUserConfirmation : IUserConfirmation
+/// <summary>Wires the dialogs up to the view models without letting them reference a window.</summary>
+public sealed class DialogUserInteraction : IUserInteraction
 {
     private readonly Func<Window?> _ownerAccessor;
 
-    public DialogUserConfirmation(Func<Window?> ownerAccessor)
+    public DialogUserInteraction(Func<Window?> ownerAccessor)
     {
         _ownerAccessor = ownerAccessor;
     }
 
     public bool ConfirmDisplayChange(string summary, TimeSpan timeout) =>
         ConfirmChangesDialog.Show(_ownerAccessor(), summary, timeout);
+
+    public bool ConfirmAction(string title, string message) =>
+        MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+
+    public string? PromptForText(string title, string prompt, string initialValue = "") =>
+        TextPromptDialog.Show(_ownerAccessor(), title, prompt, initialValue);
 
     public void ShowError(string title, string message) =>
         MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);

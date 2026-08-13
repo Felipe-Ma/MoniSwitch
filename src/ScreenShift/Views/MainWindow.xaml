@@ -259,15 +259,73 @@
                         </ListBox.ItemsPanel>
                     </ListBox>
 
-                    <TextBlock Text="PROFILES" Style="{StaticResource Text.SectionHeader}" Margin="2,14,0,10" />
+                    <Grid Margin="2,14,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="PROFILES" Style="{StaticResource Text.SectionHeader}"
+                                   Margin="0" VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Content="Save current as profile"
+                                Style="{StaticResource Button.Ghost}"
+                                Padding="13,6"
+                                Command="{Binding SaveProfileCommand}" />
+                    </Grid>
 
-                    <Border Style="{StaticResource Card}" Padding="18,16">
+                    <Border Style="{StaticResource Card}" Padding="18,16"
+                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisInverted}}">
                         <StackPanel>
-                            <TextBlock Text="Not built yet" FontWeight="SemiBold" />
+                            <TextBlock Text="No profiles yet" FontWeight="SemiBold" />
                             <TextBlock Style="{StaticResource Text.Muted}" TextWrapping="Wrap" Margin="0,5,0,0"
-                                       Text="Phase 1 covers detection only. Saving and applying profiles arrives once changing resolution, refresh rate and primary display has been proven to work on real hardware." />
+                                       Text="Arrange your displays the way you want them, then save the layout as a profile. Applying a profile puts everything back in one click, protected by the same 15-second revert." />
                         </StackPanel>
                     </Border>
+
+                    <ItemsControl ItemsSource="{Binding Profiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Card}" Padding="16,13" Margin="0,0,0,10"
+                                        ToolTip="{Binding DetailToolTip}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,14,0">
+                                            <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Muted}"
+                                                       Margin="0,3,0,0" />
+                                            <TextBlock Text="{Binding UpdatedText}" Style="{StaticResource Text.Faint}"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="Apply" Style="{StaticResource Button.Accent}"
+                                                    Padding="18,6"
+                                                    Command="{Binding ApplyCommand}" />
+                                            <Button Content="Update" Style="{StaticResource Button.Ghost}"
+                                                    Padding="11,6" Margin="8,0,0,0" FontSize="12"
+                                                    ToolTip="Overwrite this profile with the current configuration"
+                                                    Command="{Binding UpdateCommand}" />
+                                            <Button Content="Rename" Style="{StaticResource Button.Ghost}"
+                                                    Padding="11,6" Margin="8,0,0,0" FontSize="12"
+                                                    Command="{Binding RenameCommand}" />
+                                            <Button Content="Duplicate" Style="{StaticResource Button.Ghost}"
+                                                    Padding="11,6" Margin="8,0,0,0" FontSize="12"
+                                                    Command="{Binding DuplicateCommand}" />
+                                            <Button Content="Delete" Style="{StaticResource Button.Ghost}"
+                                                    Foreground="{StaticResource Brush.Danger}"
+                                                    Padding="11,6" Margin="8,0,0,0" FontSize="12"
+                                                    Command="{Binding DeleteCommand}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
                 </StackPanel>
             </ScrollViewer>

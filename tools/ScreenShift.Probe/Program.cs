@@ -8,6 +8,11 @@ using ScreenShift.Services;
 //   ScreenShift.Probe                      dump the detected monitors
 //   ScreenShift.Probe --modes              dump raw DEVMODE data and supported modes
 //   ScreenShift.Probe --test-apply <kind>  apply a change to a non-primary display, then undo it
+//   ScreenShift.Probe --profile-save <name>    save the current configuration as a profile
+//   ScreenShift.Probe --profile-list           list saved profiles
+//   ScreenShift.Probe --profile-apply <name>   apply a profile (add --dry to only print the plan)
+//   ScreenShift.Probe --profile-delete <name>  delete a profile
+//   ScreenShift.Probe --test-dialog [seconds]  show the keep/revert prompt; it must time out
 //   ScreenShift.Probe --capture <file.png> render the main window to an image instead
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -63,6 +68,57 @@ if (args.Any(a => string.Equals(a, "--persist", StringComparison.OrdinalIgnoreCa
     return persistResult.Succeeded ? 0 : 1;
 }
 
+var profileSaveIndex = Array.FindIndex(args, a => string.Equals(a, "--profile-save", StringComparison.OrdinalIgnoreCase));
+if (profileSaveIndex >= 0)
+{
+    if (profileSaveIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--profile-save needs a name, e.g. --profile-save Gaming");
+        return 2;
+    }
+
+    return ProfileCommands.Save(args[profileSaveIndex + 1]);
+}
+
+if (args.Any(a => string.Equals(a, "--profile-list", StringComparison.OrdinalIgnoreCase)))
+{
+    return ProfileCommands.List();
+}
+
+var profileApplyIndex = Array.FindIndex(args, a => string.Equals(a, "--profile-apply", StringComparison.OrdinalIgnoreCase));
+if (profileApplyIndex >= 0)
+{
+    if (profileApplyIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--profile-apply needs a profile name.");
+        return 2;
+    }
+
+    var dry = args.Any(a => string.Equals(a, "--dry", StringComparison.OrdinalIgnoreCase));
+    return ProfileCommands.Apply(args[profileApplyIndex + 1], dry);
+}
+
+var profileDeleteIndex = Array.FindIndex(args, a => string.Equals(a, "--profile-delete", StringComparison.OrdinalIgnoreCase));
+if (profileDeleteIndex >= 0)
+{
+    if (profileDeleteIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--profile-delete needs a profile name.");
+        return 2;
+    }
+
+    return ProfileCommands.Delete(args[profileDeleteIndex + 1]);
+}
+
+var dialogTestIndex = Array.FindIndex(args, a => string.Equals(a, "--test-dialog", StringComparison.OrdinalIgnoreCase));
+if (dialogTestIndex >= 0)
+{
+    var seconds = dialogTestIndex + 1 < args.Length && double.TryParse(args[dialogTestIndex + 1], out var parsed)
+        ? parsed
+        : 4d;
+    return DialogTest.Run(seconds);
+}
+
 var setIndex = Array.FindIndex(args, a => string.Equals(a, "--set", StringComparison.OrdinalIgnoreCase));
 if (setIndex >= 0)
 {
@@ -96,7 +152,7 @@ if (captureIndex >= 0)
         return 2;
     }
 
-    return WindowCapture.Run(args[captureIndex + 1], width: 1280, height: 820);
+    return WindowCapture.Run(args[captureIndex + 1], width: 1280, height: 1000);
 }
 
 var logger = new ConsoleLogger();
