@@ -167,7 +167,11 @@ public sealed class DisplayService : IDisplayService
 
         if (topologyRequests.Count > 0)
         {
-            var topologyResult = ApplyTopology(topologyRequests);
+            // The intended primary matters to the topology stage: if the current primary is being
+            // switched off, the remaining displays have to be re-anchored around the future one.
+            var futurePrimary = effective.FirstOrDefault(r => r.MakePrimary)?.Monitor;
+
+            var topologyResult = ApplyTopology(topologyRequests, futurePrimary);
             if (!topologyResult.Succeeded)
             {
                 return topologyResult;
@@ -364,7 +368,7 @@ public sealed class DisplayService : IDisplayService
     /// path connecting a desktop surface to a connector, so enabling and disabling is setting and
     /// clearing that flag and letting Windows work out the consequences.
     /// </remarks>
-    private ApplyResult ApplyTopology(IReadOnlyList<MonitorChangeRequest> requests)
+    private ApplyResult ApplyTopology(IReadOnlyList<MonitorChangeRequest> requests, MonitorInfo? futurePrimary)
     {
         // ALL_PATHS, not ONLY_ACTIVE_PATHS: a monitor that is currently off has no active path, so
         // querying only active ones would leave nothing to switch back on.
@@ -432,6 +436,8 @@ public sealed class DisplayService : IDisplayService
             return ApplyResult.Ok();
         }
 
+        EnsureOriginAnchored(snapshot, futurePrimary);
+
         // SDC_ALLOW_CHANGES is what makes this workable: it lets Windows lay out the desktop around
         // the monitors that are now on, rather than demanding a complete, self-consistent
         // configuration that we would otherwise have to compute by hand.
@@ -460,6 +466,75 @@ public sealed class DisplayService : IDisplayService
 
         _logger.Info($"Topology change applied and saved ({changed} monitor(s) switched).");
         return ApplyResult.Ok();
+    }
+
+    /// <summary>
+    /// Guarantees the supplied configuration still has a source at the desktop origin.
+    /// </summary>
+    /// <remarks>
+    /// Windows rejects a supplied configuration with no source at (0,0) as ERROR_INVALID_PARAMETER,
+    /// because the origin is what defines the primary display — and disabling the current primary
+    /// rips the origin out. The remaining active sources are translated as a block until the
+    /// intended future primary (or, without one, the first remaining display) sits at the origin.
+    /// Only the supplied arrays are edited; the exact final positions are the mode stage's job,
+    /// and its requests carry absolute coordinates that land on top of this unchanged.
+    /// </remarks>
+    private void EnsureOriginAnchored(DisplayConfigSnapshot snapshot, MonitorInfo? futurePrimary)
+    {
+        var paths = snapshot.Paths;
+        var modes = snapshot.Modes;
+
+        var sourceModeIndices = new List<int>();
+        var seenSources = new HashSet<(string Adapter, uint Source)>();
+        var anchorIndex = -1;
+
+        foreach (var path in paths)
+        {
+            if (!path.IsActive)
+            {
+                continue;
+            }
+
+            var index = path.sourceInfo.modeInfoIdx;
+            if (index == ModeIndexInvalid
+                || index >= modes.Length
+                || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE.Source)
+            {
+                continue;
+            }
+
+            if (seenSources.Add((path.sourceInfo.adapterId.ToString(), path.sourceInfo.id)))
+            {
+                sourceModeIndices.Add((int)index);
+            }
+
+            if (futurePrimary is not null
+                && path.targetInfo.id == futurePrimary.TargetId
+                && path.targetInfo.adapterId.ToString() == futurePrimary.AdapterId)
+            {
+                anchorIndex = (int)index;
+            }
+        }
+
+        if (sourceModeIndices.Count == 0
+            || sourceModeIndices.Any(i => modes[i].mode.sourceMode.position is { x: 0, y: 0 }))
+        {
+            return;
+        }
+
+        if (anchorIndex < 0)
+        {
+            anchorIndex = sourceModeIndices[0];
+        }
+
+        var origin = modes[anchorIndex].mode.sourceMode.position;
+        _logger.Info($"No display left at the desktop origin; translating {sourceModeIndices.Count} source(s) by ({-origin.x}, {-origin.y}).");
+
+        foreach (var index in sourceModeIndices)
+        {
+            modes[index].mode.sourceMode.position.x -= origin.x;
+            modes[index].mode.sourceMode.position.y -= origin.y;
+        }
     }
 
     /// <summary>
