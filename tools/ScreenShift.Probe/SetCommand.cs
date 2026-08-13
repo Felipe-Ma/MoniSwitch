@@ -28,10 +28,22 @@ internal static class SetCommand
         var logger = new ConsoleLogger();
         var service = new DisplayService(logger);
 
-        var target = service.GetMonitors().FirstOrDefault(m => m.IsEnabled && m.DisplayNumber == displayNumber);
+        var monitors = service.GetMonitors();
+
+        // A switched-off monitor has no GDI device and therefore no display number, so it can only
+        // be named by its target id. Falling back to that is what makes it addressable at all.
+        var target = monitors.FirstOrDefault(m => m.IsEnabled && m.DisplayNumber == displayNumber)
+                     ?? monitors.FirstOrDefault(m => m.TargetId == (uint)displayNumber);
+
         if (target is null)
         {
-            Console.Error.WriteLine($"No enabled display numbered {displayNumber}.");
+            Console.Error.WriteLine($"No display numbered {displayNumber}, and no target with that id.");
+            Console.Error.WriteLine("Connected displays:");
+            foreach (var monitor in monitors)
+            {
+                Console.Error.WriteLine($"  {monitor.FriendlyName,-16} display {monitor.DisplayNumber?.ToString() ?? "—"}, target {monitor.TargetId}, {(monitor.IsEnabled ? "on" : "off")}");
+            }
+
             return 2;
         }
 
@@ -64,17 +76,64 @@ internal static class SetCommand
             refresh = hz;
         }
 
+        DisplayOrientation? orientation = null;
+        var orientationIndex = Array.FindIndex(args, a => string.Equals(a, "--orientation", StringComparison.OrdinalIgnoreCase));
+        if (orientationIndex >= 0 && orientationIndex + 1 < args.Length)
+        {
+            orientation = args[orientationIndex + 1].ToLowerInvariant() switch
+            {
+                "landscape" => DisplayOrientation.Landscape,
+                "portrait" => DisplayOrientation.Portrait,
+                "flipped" or "landscapeflipped" => DisplayOrientation.LandscapeFlipped,
+                "portraitflipped" => DisplayOrientation.PortraitFlipped,
+                _ => null,
+            };
+
+            if (orientation is null)
+            {
+                Console.Error.WriteLine("--orientation wants landscape, portrait, flipped or portraitflipped.");
+                return 2;
+            }
+        }
+
+        DisplayPosition? position = null;
+        var positionIndex = Array.FindIndex(args, a => string.Equals(a, "--position", StringComparison.OrdinalIgnoreCase));
+        if (positionIndex >= 0 && positionIndex + 1 < args.Length)
+        {
+            var parts = args[positionIndex + 1].Split(',');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var x) || !int.TryParse(parts[1], out var y))
+            {
+                Console.Error.WriteLine("--position wants something like 0,-1440.");
+                return 2;
+            }
+
+            position = new DisplayPosition(x, y);
+        }
+
+        bool? enabled = null;
+        if (args.Any(a => string.Equals(a, "--enable", StringComparison.OrdinalIgnoreCase)))
+        {
+            enabled = true;
+        }
+        else if (args.Any(a => string.Equals(a, "--disable", StringComparison.OrdinalIgnoreCase)))
+        {
+            enabled = false;
+        }
+
         var request = new MonitorChangeRequest
         {
             Monitor = target,
+            Enabled = enabled,
             Resolution = resolution,
             RefreshHz = refresh,
+            Orientation = orientation,
+            Position = position,
             MakePrimary = makePrimary,
         };
 
         if (!request.ChangesAnything)
         {
-            Console.Error.WriteLine("Nothing to change. Pass --resolution, --refresh and/or --primary.");
+            Console.Error.WriteLine("Nothing to change. Pass --resolution, --refresh, --primary, --enable or --disable.");
             return 2;
         }
 
@@ -94,10 +153,12 @@ internal static class SetCommand
         Thread.Sleep(TimeSpan.FromSeconds(2));
 
         Console.WriteLine("--- now ---");
-        foreach (var monitor in service.GetMonitors().Where(m => m.IsEnabled))
+        foreach (var monitor in service.GetMonitors())
         {
-            Console.WriteLine($"  {monitor.GdiDeviceName,-14} {monitor.FriendlyName,-14} {monitor.Resolution} @ {monitor.RefreshRate} "
-                              + $"at ({monitor.Position?.X},{monitor.Position?.Y}){(monitor.IsPrimary ? "  PRIMARY" : string.Empty)}");
+            Console.WriteLine(monitor.IsEnabled
+                ? $"  {monitor.GdiDeviceName,-14} {monitor.FriendlyName,-14} {monitor.Resolution} @ {monitor.RefreshRate} "
+                  + $"at ({monitor.Position?.X},{monitor.Position?.Y}){(monitor.IsPrimary ? "  PRIMARY" : string.Empty)}"
+                : $"  {"(off)",-14} {monitor.FriendlyName,-14} target {monitor.TargetId}");
         }
 
         return 0;

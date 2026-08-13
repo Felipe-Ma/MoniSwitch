@@ -37,6 +37,11 @@ internal static class ApplyTest
             return 2;
         }
 
+        if (request.Enabled == false)
+        {
+            Console.WriteLine($"This will switch {target.FriendlyName} off for {HoldDuration.TotalSeconds:0} seconds, then back on.");
+        }
+
         Console.WriteLine($"Change: {request}");
         Console.WriteLine();
 
@@ -142,8 +147,11 @@ internal static class ApplyTest
             case "primary":
                 return new MonitorChangeRequest { Monitor = target, MakePrimary = true };
 
+            case "disable":
+                return new MonitorChangeRequest { Monitor = target, Enabled = false };
+
             default:
-                Console.Error.WriteLine($"Unknown test '{what}'. Use refresh, resolution or primary.");
+                Console.Error.WriteLine($"Unknown test '{what}'. Use refresh, resolution, primary or disable.");
                 return null;
         }
     }

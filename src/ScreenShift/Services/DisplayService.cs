@@ -135,7 +135,19 @@ public sealed class DisplayService : IDisplayService
             entries.Add(new SavedDisplayMode(device, mode, monitor.IsPrimary));
         }
 
-        var snapshot = new DisplaySnapshot(entries);
+        // ALL_PATHS so the snapshot records which monitors were switched off, not just how the
+        // switched-on ones were configured. Without this a topology change could not be undone.
+        DisplayConfigSnapshot? configuration = null;
+        try
+        {
+            configuration = _api.Query(NativeConstants.QDC_ALL_PATHS);
+        }
+        catch (DisplayConfigException ex)
+        {
+            _logger.Warn($"Could not capture the display path configuration; a topology change would not be undoable: {ex.Message}");
+        }
+
+        var snapshot = new DisplaySnapshot(entries, configuration);
         _logger.Info($"Captured display snapshot: {snapshot}.");
         return snapshot;
     }
@@ -146,6 +158,27 @@ public sealed class DisplayService : IDisplayService
         if (effective.Count == 0)
         {
             return ApplyResult.Ok();
+        }
+
+        // Switching monitors on or off comes first and on its own. It is a topology change, so it
+        // reshuffles source ids and GDI device names — which means anything resolved before it runs
+        // is stale afterwards, and the mode stage has to re-resolve its targets.
+        var topologyRequests = effective.Where(r => r.Enabled is not null).ToList();
+
+        if (topologyRequests.Count > 0)
+        {
+            var topologyResult = ApplyTopology(topologyRequests);
+            if (!topologyResult.Succeeded)
+            {
+                return topologyResult;
+            }
+
+            effective = ReResolve(effective);
+
+            if (effective.Count == 0)
+            {
+                return ApplyResult.Ok();
+            }
         }
 
         var primaryRequests = effective.Where(r => r.MakePrimary).ToList();
@@ -183,11 +216,40 @@ public sealed class DisplayService : IDisplayService
                 return ApplyResult.Fail($"{request.Monitor.FriendlyName} is not currently enabled, so its mode cannot be changed.");
             }
 
-            if (request.Resolution is null && request.RefreshHz is null)
+            if (!request.ChangesMode)
             {
                 continue;
             }
 
+            // Width, height, depth and rate are always named. They are carried over from the read,
+            // so restating them changes nothing, and leaving any of them out invites the driver to
+            // substitute a default.
+            var fields = DeviceModeConstants.DM_BITSPERPEL
+                | DeviceModeConstants.DM_PELSWIDTH
+                | DeviceModeConstants.DM_PELSHEIGHT
+                | DeviceModeConstants.DM_DISPLAYFREQUENCY;
+
+            if (request.Orientation is { } orientation)
+            {
+                // DEVMODE's width and height are in desktop space, so a quarter turn transposes
+                // them. Turning a display without swapping these asks for a 2560-wide desktop on a
+                // panel that is now 1440 wide, which the driver rejects.
+                var wasRotated = mode.dmDisplayOrientation is DeviceModeConstants.DMDO_90
+                    or DeviceModeConstants.DMDO_270;
+                var willBeRotated = orientation is DisplayOrientation.Portrait
+                    or DisplayOrientation.PortraitFlipped;
+
+                if (wasRotated != willBeRotated)
+                {
+                    (mode.dmPelsWidth, mode.dmPelsHeight) = (mode.dmPelsHeight, mode.dmPelsWidth);
+                }
+
+                mode.dmDisplayOrientation = ToDeviceOrientation(orientation);
+                fields |= DeviceModeConstants.DM_DISPLAYORIENTATION;
+            }
+
+            // After the orientation swap, so an explicit resolution is read as being in the
+            // orientation the display is going to end up in.
             if (request.Resolution is { } resolution)
             {
                 mode.dmPelsWidth = (uint)resolution.Width;
@@ -199,12 +261,14 @@ public sealed class DisplayService : IDisplayService
                 mode.dmDisplayFrequency = hz;
             }
 
-            // Replace rather than extend the field mask: naming only what is being changed leaves
-            // orientation and scaling alone, which is what "change the refresh rate" should mean.
-            mode.dmFields = DeviceModeConstants.DM_BITSPERPEL
-                | DeviceModeConstants.DM_PELSWIDTH
-                | DeviceModeConstants.DM_PELSHEIGHT
-                | DeviceModeConstants.DM_DISPLAYFREQUENCY;
+            if (request.Position is { } position)
+            {
+                mode.dmPosition.x = position.X;
+                mode.dmPosition.y = position.Y;
+                fields |= DeviceModeConstants.DM_POSITION;
+            }
+
+            mode.dmFields = fields;
 
             working[device] = mode;
             changed.Add(device);
@@ -216,6 +280,12 @@ public sealed class DisplayService : IDisplayService
         foreach (var device in changed)
         {
             var candidate = working[device];
+
+            // Position is not a property of the graphics mode, and including it here makes the
+            // test fail on transient overlaps that the real apply resolves. Only ask the driver
+            // about the thing it is actually being asked to display.
+            candidate.dmFields &= ~DeviceModeConstants.DM_POSITION;
+
             var testResult = _api.TestMode(device, ref candidate);
 
             if (testResult != DeviceModeConstants.DISP_CHANGE_SUCCESSFUL)
@@ -283,6 +353,206 @@ public sealed class DisplayService : IDisplayService
 
         _logger.Info("Apply committed successfully.");
         return ApplyResult.Ok();
+    }
+
+    /// <summary>
+    /// Switches monitors on and off by editing the CCD path table.
+    /// </summary>
+    /// <remarks>
+    /// GDI has no honest way to express this — its trick for "off" is a zero-sized mode, which is a
+    /// side effect rather than the operation. In CCD a monitor being on is literally a flag on the
+    /// path connecting a desktop surface to a connector, so enabling and disabling is setting and
+    /// clearing that flag and letting Windows work out the consequences.
+    /// </remarks>
+    private ApplyResult ApplyTopology(IReadOnlyList<MonitorChangeRequest> requests)
+    {
+        // ALL_PATHS, not ONLY_ACTIVE_PATHS: a monitor that is currently off has no active path, so
+        // querying only active ones would leave nothing to switch back on.
+        var snapshot = _api.Query(NativeConstants.QDC_ALL_PATHS);
+        var paths = snapshot.Paths;
+
+        if (paths.Length == 0)
+        {
+            return ApplyResult.Fail("Windows reported no display paths at all.");
+        }
+
+        var activeCount = paths.Count(p => p.IsActive);
+        var changed = 0;
+
+        foreach (var request in requests)
+        {
+            var wantEnabled = request.Enabled!.Value;
+            var monitor = request.Monitor;
+
+            if (monitor.IsEnabled == wantEnabled)
+            {
+                continue;
+            }
+
+            var index = FindPathIndex(paths, monitor, wantEnabled);
+            if (index < 0)
+            {
+                return ApplyResult.Fail(
+                    $"Could not find a display path for {monitor.FriendlyName}, so it cannot be switched {(wantEnabled ? "on" : "off")}.");
+            }
+
+            if (!wantEnabled && activeCount <= 1)
+            {
+                return ApplyResult.Fail(
+                    $"{monitor.FriendlyName} is the only display still switched on. Turning it off would leave you with no screen at all.");
+            }
+
+            var path = paths[index];
+
+            if (wantEnabled)
+            {
+                path.flags |= NativeConstants.DISPLAYCONFIG_PATH_ACTIVE;
+                activeCount++;
+            }
+            else
+            {
+                path.flags &= ~NativeConstants.DISPLAYCONFIG_PATH_ACTIVE;
+                activeCount--;
+            }
+
+            // Drop the mode references on the path being changed. A monitor coming on has no mode
+            // record yet, and one going off leaves a stale reference behind; invalidating both lets
+            // Windows pick sensible modes and positions under SDC_ALLOW_CHANGES.
+            path.sourceInfo.modeInfoIdx = ModeIndexInvalid;
+            path.targetInfo.modeInfoIdx = ModeIndexInvalid;
+
+            paths[index] = path;
+            changed++;
+
+            _logger.Info($"Switching {monitor.FriendlyName} {(wantEnabled ? "on" : "off")} (adapter {monitor.AdapterId}, target {monitor.TargetId}).");
+        }
+
+        if (changed == 0)
+        {
+            return ApplyResult.Ok();
+        }
+
+        // SDC_ALLOW_CHANGES is what makes this workable: it lets Windows lay out the desktop around
+        // the monitors that are now on, rather than demanding a complete, self-consistent
+        // configuration that we would otherwise have to compute by hand.
+        const uint SharedFlags = NativeConstants.SDC_USE_SUPPLIED_DISPLAY_CONFIG
+            | NativeConstants.SDC_ALLOW_CHANGES;
+
+        var validate = _api.SetConfiguration(snapshot, NativeConstants.SDC_VALIDATE | SharedFlags);
+
+        if (validate != NativeConstants.ERROR_SUCCESS)
+        {
+            _logger.Warn($"Topology change rejected at validation: {validate} ({DisplayConfigException.DescribeError(validate)}).");
+            return ApplyResult.Fail(
+                $"Windows will not accept that combination of displays ({DisplayConfigException.DescribeError(validate)}). Nothing was changed.");
+        }
+
+        var apply = _api.SetConfiguration(
+            snapshot,
+            NativeConstants.SDC_APPLY | NativeConstants.SDC_SAVE_TO_DATABASE | SharedFlags);
+
+        if (apply != NativeConstants.ERROR_SUCCESS)
+        {
+            _logger.Error($"Topology change failed on apply: {apply} ({DisplayConfigException.DescribeError(apply)}).");
+            return ApplyResult.Fail(
+                $"Windows refused the change ({DisplayConfigException.DescribeError(apply)}).");
+        }
+
+        _logger.Info($"Topology change applied and saved ({changed} monitor(s) switched).");
+        return ApplyResult.Ok();
+    }
+
+    /// <summary>
+    /// Finds the path to flip for a monitor. When switching one off, the active path is the one to
+    /// clear. When switching one on, it has to be a path whose desktop surface is free.
+    /// </summary>
+    /// <remarks>
+    /// The source is what makes this more than a lookup. Every target has a path for each source on
+    /// the adapter, and picking one whose source is already driving another display does not extend
+    /// the desktop — it clones the two monitors together onto one surface. Choosing a free source is
+    /// the difference between "turn this monitor on" and "mirror that other monitor onto it".
+    /// </remarks>
+    private static int FindPathIndex(DISPLAYCONFIG_PATH_INFO[] paths, MonitorInfo monitor, bool wantEnabled)
+    {
+        var occupiedSources = new HashSet<(string Adapter, uint Source)>();
+
+        foreach (var path in paths)
+        {
+            if (path.IsActive && path.targetInfo.id != monitor.TargetId)
+            {
+                occupiedSources.Add((path.sourceInfo.adapterId.ToString(), path.sourceInfo.id));
+            }
+        }
+
+        var fallback = -1;
+
+        for (var i = 0; i < paths.Length; i++)
+        {
+            var path = paths[i];
+
+            if (path.targetInfo.id != monitor.TargetId
+                || path.targetInfo.adapterId.ToString() != monitor.AdapterId)
+            {
+                continue;
+            }
+
+            if (path.IsActive == wantEnabled)
+            {
+                fallback = i;
+                continue;
+            }
+
+            if (!wantEnabled)
+            {
+                return i;
+            }
+
+            if (!occupiedSources.Contains((path.sourceInfo.adapterId.ToString(), path.sourceInfo.id)))
+            {
+                return i;
+            }
+
+            // Right target, but its surface is taken; keep looking for one that is free.
+            fallback = fallback < 0 ? i : fallback;
+        }
+
+        return fallback;
+    }
+
+    /// <summary>
+    /// Rebuilds the outstanding requests against freshly read monitors after a topology change.
+    /// Matching is by stable id, since display numbers and GDI names will have moved around.
+    /// </summary>
+    private List<MonitorChangeRequest> ReResolve(IEnumerable<MonitorChangeRequest> requests)
+    {
+        var current = GetMonitors().ToDictionary(m => m.StableKey, StringComparer.OrdinalIgnoreCase);
+        var rebuilt = new List<MonitorChangeRequest>();
+
+        foreach (var request in requests)
+        {
+            if (!request.ChangesMode && !request.MakePrimary)
+            {
+                continue;
+            }
+
+            if (!current.TryGetValue(request.Monitor.StableKey, out var monitor) || !monitor.IsEnabled)
+            {
+                _logger.Warn($"{request.Monitor.FriendlyName} is no longer available after the topology change; skipping the rest of its settings.");
+                continue;
+            }
+
+            rebuilt.Add(new MonitorChangeRequest
+            {
+                Monitor = monitor,
+                Resolution = request.Resolution,
+                RefreshHz = request.RefreshHz,
+                Orientation = request.Orientation,
+                Position = request.Position,
+                MakePrimary = request.MakePrimary,
+            });
+        }
+
+        return rebuilt;
     }
 
     /// <summary>
@@ -488,6 +758,32 @@ public sealed class DisplayService : IDisplayService
 
         _logger.Info($"Restoring {snapshot}.");
 
+        // The CCD path table is the only thing that can put a switched-off monitor back on, so it
+        // is tried before the mode-level restore. Exact first, then permitting adjustment: an exact
+        // reinstatement is preferable, but a slightly adjusted one still beats leaving it wrong.
+        if (snapshot.Configuration is { } configuration && configuration.Paths.Length > 0)
+        {
+            const uint BaseFlags = NativeConstants.SDC_APPLY
+                | NativeConstants.SDC_USE_SUPPLIED_DISPLAY_CONFIG
+                | NativeConstants.SDC_SAVE_TO_DATABASE;
+
+            var exact = _api.SetConfiguration(configuration, BaseFlags);
+            if (exact == NativeConstants.ERROR_SUCCESS)
+            {
+                _logger.Info("Restored the previous configuration through the CCD path table.");
+                return ApplyResult.Ok();
+            }
+
+            var adjusted = _api.SetConfiguration(configuration, BaseFlags | NativeConstants.SDC_ALLOW_CHANGES);
+            if (adjusted == NativeConstants.ERROR_SUCCESS)
+            {
+                _logger.Info("Restored the previous configuration, with Windows adjusting it slightly.");
+                return ApplyResult.Ok();
+            }
+
+            _logger.Warn($"CCD restore failed ({DisplayConfigException.DescribeError(adjusted)}); falling back to restoring modes only.");
+        }
+
         var modes = snapshot.Entries.ToDictionary(e => e.GdiDeviceName, e => e.Mode, StringComparer.OrdinalIgnoreCase);
         var primary = snapshot.Entries.FirstOrDefault(e => e.WasPrimary)?.GdiDeviceName;
 
@@ -556,9 +852,12 @@ public sealed class DisplayService : IDisplayService
 
         foreach (var path in snapshot.Paths)
         {
-            // Targets that are not plugged in are stale entries from Windows' persistence
-            // database — a monitor that used to be on this port. Showing them would be noise.
-            if (!path.targetInfo.IsConnected)
+            // targetAvailable, not DISPLAYCONFIG_TARGET_IS_CONNECTED. Windows clears the connected
+            // bit when a monitor is switched off but leaves targetAvailable set, so filtering on
+            // "connected" makes disabled monitors vanish from the list entirely — and a monitor you
+            // cannot see is one you cannot switch back on. An empty connector has neither flag, and
+            // that is what this is meant to exclude.
+            if (path.targetInfo.targetAvailable == 0)
             {
                 continue;
             }
@@ -816,6 +1115,17 @@ public sealed class DisplayService : IDisplayService
             .ThenBy(m => m.DisplayNumber ?? int.MaxValue)
             .ThenBy(m => m.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
+
+    /// <summary>
+    /// Converts to DEVMODE's orientation values, which are 0-based unlike CCD's 1-based rotations.
+    /// </summary>
+    private static uint ToDeviceOrientation(DisplayOrientation orientation) => orientation switch
+    {
+        DisplayOrientation.Portrait => DeviceModeConstants.DMDO_90,
+        DisplayOrientation.LandscapeFlipped => DeviceModeConstants.DMDO_180,
+        DisplayOrientation.PortraitFlipped => DeviceModeConstants.DMDO_270,
+        _ => DeviceModeConstants.DMDO_DEFAULT,
+    };
 
     private static DisplayOrientation MapOrientation(DISPLAYCONFIG_ROTATION rotation) => rotation switch
     {

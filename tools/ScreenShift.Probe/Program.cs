@@ -17,6 +17,35 @@ if (args.Any(a => string.Equals(a, "--modes", StringComparison.OrdinalIgnoreCase
     return ModeDump.Run();
 }
 
+if (args.Any(a => string.Equals(a, "--paths", StringComparison.OrdinalIgnoreCase)))
+{
+    return PathDump.Dump();
+}
+
+var topologyIndex = Array.FindIndex(args, a => string.Equals(a, "--topology", StringComparison.OrdinalIgnoreCase));
+if (topologyIndex >= 0)
+{
+    if (topologyIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--topology needs a name: extend, clone, internal or external.");
+        return 2;
+    }
+
+    return PathDump.ApplyTopology(args[topologyIndex + 1]);
+}
+
+var forceIndex = Array.FindIndex(args, a => string.Equals(a, "--force-enable", StringComparison.OrdinalIgnoreCase));
+if (forceIndex >= 0)
+{
+    if (forceIndex + 1 >= args.Length || !uint.TryParse(args[forceIndex + 1], out var forceTargetId))
+    {
+        Console.Error.WriteLine("--force-enable needs a target id, e.g. --force-enable 4357");
+        return 2;
+    }
+
+    return PathDump.ForceEnable(forceTargetId);
+}
+
 if (args.Any(a => string.Equals(a, "--check-persist", StringComparison.OrdinalIgnoreCase)))
 {
     return PersistenceCheck.Run();

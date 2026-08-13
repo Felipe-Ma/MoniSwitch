@@ -3,9 +3,9 @@
 A lightweight Windows monitor profile manager. Save display layouts and switch between them in one
 click, without opening Settings.
 
-Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 and 2 are complete**: monitors are detected
-and shown, and resolution, refresh rate and primary display can be changed, with changes saved so
-they survive a reboot.
+Built to the spec in [AGENTS.md](AGENTS.md). **Phases 1 to 3 are complete**: monitors are detected
+and shown, they can be switched on and off, and resolution, refresh rate, orientation, position and
+primary display can all be changed — with every change saved so it survives a reboot.
 
 ## Requirements
 
@@ -56,6 +56,19 @@ when a stricter one is refused:
 The display designated primary is always written first, because Windows requires a primary anchored
 at the desktop origin and moving anything else before that anchor exists leaves the configuration
 momentarily without one.
+
+**Switching monitors on and off** is a different operation again, and goes through the CCD path
+table. A monitor being on is literally a flag on the path joining a desktop surface to a connector,
+so this is setting or clearing that flag and letting Windows work out the rest. Two things about it
+are easy to get wrong:
+
+- A switched-off monitor keeps `targetAvailable` set but has `DISPLAYCONFIG_TARGET_IS_CONNECTED`
+  cleared. Filtering the monitor list on "connected" makes disabled monitors disappear entirely —
+  and a monitor you cannot see is one you cannot switch back on. `targetAvailable` is what
+  distinguishes a real monitor from an empty connector.
+- Each target has a path for every source on the adapter. Switching one on via a source that is
+  already driving another display does not extend the desktop, it *clones* the two monitors onto one
+  surface. Picking a free source is the difference between "turn this on" and "mirror that onto it".
 
 **Saving** goes through the CCD API (`SetDisplayConfig` with `SDC_SAVE_TO_DATABASE`). Windows 11
 keeps display configuration in the CCD database, not the registry keys GDI writes to — on the
@@ -128,7 +141,7 @@ Logs older than seven days are deleted at startup.
 | --- | --- | --- |
 | 1 | Detect monitors, show them in the UI | Done |
 | 2 | Change resolution, refresh rate, primary | Done |
-| 3 | Enable/disable monitors, topology switching | Not started |
+| 3 | Enable/disable monitors, topology switching | Done |
 | 4 | Save and load profiles | Not started |
 | 5 | One-click apply with rollback | Not started |
 | 6 | Tray icon, global hotkeys, polish | Not started |

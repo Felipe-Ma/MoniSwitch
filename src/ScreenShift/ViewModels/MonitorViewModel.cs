@@ -29,11 +29,13 @@ public sealed class MonitorViewModel : ObservableObject
     private DisplayResolution? _selectedResolution;
     private uint? _selectedRefreshHz;
     private bool _makePrimary;
+    private bool _wantEnabled;
     private bool _suppressRefreshRateRebuild;
 
     public MonitorViewModel(MonitorInfo model)
     {
         Model = model;
+        _wantEnabled = model.IsEnabled;
     }
 
     public MonitorInfo Model { get; }
@@ -202,6 +204,22 @@ public sealed class MonitorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Whether the monitor should be switched on. Unlike the other settings this is meaningful for
+    /// a monitor that is currently off — it is the only way to bring one back.
+    /// </summary>
+    public bool WantEnabled
+    {
+        get => _wantEnabled;
+        set
+        {
+            if (SetProperty(ref _wantEnabled, value))
+            {
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+        }
+    }
+
     public bool CanBecomePrimary => Model.IsEnabled && !Model.IsPrimary;
 
     public bool HasPendingChanges => BuildRequest() is not null;
@@ -253,6 +271,7 @@ public sealed class MonitorViewModel : ObservableObject
     public void ResetPendingChanges()
     {
         MakePrimary = false;
+        WantEnabled = Model.IsEnabled;
 
         _suppressRefreshRateRebuild = true;
         SelectedResolution = _appliedResolution;
@@ -265,21 +284,21 @@ public sealed class MonitorViewModel : ObservableObject
     /// <summary>The change to send to the service, or null when nothing would actually change.</summary>
     public MonitorChangeRequest? BuildRequest()
     {
-        if (!Model.IsEnabled)
-        {
-            return null;
-        }
+        // Mode settings only apply to a monitor that is already on. A monitor being switched on in
+        // this same request has no mode list yet, so there is nothing meaningful to ask for.
+        var configurable = Model.IsEnabled;
 
         var request = new MonitorChangeRequest
         {
             Monitor = Model,
-            Resolution = _selectedResolution is { } resolution && resolution != _appliedResolution
+            Enabled = _wantEnabled != Model.IsEnabled ? _wantEnabled : null,
+            Resolution = configurable && _selectedResolution is { } resolution && resolution != _appliedResolution
                 ? resolution
                 : null,
-            RefreshHz = _selectedRefreshHz is { } hz && hz != _appliedRefreshHz
+            RefreshHz = configurable && _selectedRefreshHz is { } hz && hz != _appliedRefreshHz
                 ? hz
                 : null,
-            MakePrimary = _makePrimary && !Model.IsPrimary,
+            MakePrimary = configurable && _makePrimary && !Model.IsPrimary,
         };
 
         return request.ChangesAnything ? request : null;

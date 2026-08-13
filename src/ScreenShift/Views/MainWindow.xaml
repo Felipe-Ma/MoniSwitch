@@ -314,15 +314,22 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <!-- Configuration. Hidden for a disabled monitor, which has no mode list. -->
                             <Border Style="{StaticResource Card}"
                                     Padding="16,15"
-                                    Margin="0,10,10,0"
-                                    Visibility="{Binding CanConfigure, Converter={StaticResource BoolToVis}}">
+                                    Margin="0,10,10,0">
                                 <StackPanel>
                                     <TextBlock Text="CHANGE SETTINGS" Style="{StaticResource Text.SectionHeader}" />
 
-                                    <TextBlock Text="Resolution" Style="{StaticResource Text.Faint}" Margin="0,0,0,6" />
+                                    <!-- Outside the block below on purpose: switching a monitor back
+                                         on is the one setting that has to work while it is off. -->
+                                    <CheckBox Content="Display is on"
+                                              IsChecked="{Binding WantEnabled, Mode=TwoWay}"
+                                              Margin="0,0,0,4" />
+
+                                    <!-- The rest needs a mode list, which only a monitor that is
+                                         already on can provide. -->
+                                    <StackPanel Visibility="{Binding CanConfigure, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="Resolution" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
                                     <ComboBox ItemsSource="{Binding AvailableResolutions}"
                                               SelectedItem="{Binding SelectedResolution, Mode=TwoWay}" />
 
@@ -340,6 +347,7 @@
                                               IsChecked="{Binding MakePrimary, Mode=TwoWay}"
                                               IsEnabled="{Binding CanBecomePrimary}"
                                               Margin="0,16,0,0" />
+                                    </StackPanel>
 
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
                                         <Button Content="Reset"
