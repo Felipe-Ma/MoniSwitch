@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using ScreenShift.Models;
 using ScreenShift.Services;
 
 namespace ScreenShift.ViewModels;
@@ -12,9 +13,20 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>Gap drawn between adjacent monitors so their borders do not merge into one block.</summary>
     private const double TileInset = 2d;
 
+    /// <summary>How long the user has to confirm a change before it is undone. Per the spec.</summary>
+    private static readonly TimeSpan RollbackTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Breathing room between the mode switch and the confirmation prompt. Monitors take a moment
+    /// to resync after a mode change, and a prompt drawn into that gap can be missed entirely.
+    /// </summary>
+    private static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(700);
+
     private readonly IDisplayService _displayService;
+    private readonly IUserConfirmation _confirmation;
     private readonly IAppLogger _logger;
 
+    private bool _isApplying;
     private MonitorViewModel? _selectedMonitor;
     private string _summaryText = string.Empty;
     private string _statusText = "Ready.";
@@ -24,11 +36,15 @@ public sealed class MainViewModel : ObservableObject
     private double _viewportHeight;
     private string _virtualDesktopText = "—";
 
-    public MainViewModel(IDisplayService displayService, IAppLogger logger)
+    public MainViewModel(IDisplayService displayService, IUserConfirmation confirmation, IAppLogger logger)
     {
         _displayService = displayService;
+        _confirmation = confirmation;
         _logger = logger;
-        RefreshCommand = new RelayCommand(Refresh, () => !_isRefreshing);
+
+        RefreshCommand = new RelayCommand(Refresh, () => !_isRefreshing && !_isApplying);
+        ApplyCommand = new RelayCommand(ApplyChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
+        ResetCommand = new RelayCommand(ResetChanges, () => !_isApplying && SelectedMonitor?.HasPendingChanges == true);
     }
 
     /// <summary>Every connected monitor, enabled first.</summary>
@@ -38,6 +54,10 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<MonitorViewModel> EnabledMonitors { get; } = [];
 
     public RelayCommand RefreshCommand { get; }
+
+    public RelayCommand ApplyCommand { get; }
+
+    public RelayCommand ResetCommand { get; }
 
     public MonitorViewModel? SelectedMonitor
     {
@@ -59,10 +79,25 @@ public sealed class MainViewModel : ObservableObject
             if (_selectedMonitor is not null)
             {
                 _selectedMonitor.IsSelected = true;
+                EnsureModesLoaded(_selectedMonitor);
             }
 
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasSelection));
+            RaiseChangeCommandsCanExecute();
+        }
+    }
+
+    public bool IsApplying
+    {
+        get => _isApplying;
+        private set
+        {
+            if (SetProperty(ref _isApplying, value))
+            {
+                RefreshCommand.RaiseCanExecuteChanged();
+                RaiseChangeCommandsCanExecute();
+            }
         }
     }
 
@@ -109,7 +144,9 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>Re-reads the display configuration and rebuilds the monitor list.</summary>
     public void Refresh()
     {
-        if (_isRefreshing)
+        // Applying a change fires WM_DISPLAYCHANGE, which would otherwise rebuild the list (and so
+        // discard the selection and pending edits) while the confirmation prompt is still up.
+        if (_isRefreshing || _isApplying)
         {
             return;
         }
@@ -178,6 +215,117 @@ public sealed class MainViewModel : ObservableObject
             _isRefreshing = false;
             RefreshCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    /// <summary>
+    /// Applies the selected monitor's pending changes, then asks the user to confirm them before
+    /// the deadline runs out.
+    /// </summary>
+    private async void ApplyChanges()
+    {
+        if (_isApplying || SelectedMonitor is not { } monitor || monitor.BuildRequest() is not { } request)
+        {
+            return;
+        }
+
+        IsApplying = true;
+        StatusText = "Applying display changes…";
+
+        try
+        {
+            // Taken before anything is touched, so there is always a known-good state to go back to
+            // even if the apply succeeds and the result turns out to be unusable.
+            var snapshot = _displayService.CaptureSnapshot();
+
+            var result = await Task.Run(() => _displayService.Apply([request]));
+
+            if (!result.Succeeded)
+            {
+                var detail = result.Message ?? "The change was rejected.";
+                if (result.RolledBack)
+                {
+                    detail += "\n\nThe previous display settings were restored.";
+                }
+
+                _logger.Warn($"Apply failed: {detail}");
+                _confirmation.ShowError("Could not apply the change", detail);
+                StatusText = "The change was rejected.";
+                return;
+            }
+
+            await Task.Delay(SettleDelay);
+
+            var keep = _confirmation.ConfirmDisplayChange(request.ToString(), RollbackTimeout);
+
+            if (keep)
+            {
+                _logger.Info("User kept the new display settings.");
+                StatusText = $"Applied at {DateTime.Now:HH:mm:ss}";
+                return;
+            }
+
+            _logger.Info("User declined the new display settings (or the prompt timed out); reverting.");
+            var restored = await Task.Run(() => _displayService.Restore(snapshot));
+
+            if (restored.Succeeded)
+            {
+                StatusText = "Reverted to the previous settings.";
+            }
+            else
+            {
+                StatusText = "Revert failed — see the log.";
+                _confirmation.ShowError(
+                    "Revert failed",
+                    restored.Message ?? "The previous display configuration could not be fully restored.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Applying display changes threw.", ex);
+            _confirmation.ShowError("Could not apply the change", ex.Message);
+            StatusText = "The change failed.";
+        }
+        finally
+        {
+            // Clear the flag before refreshing: Refresh deliberately no-ops while applying.
+            IsApplying = false;
+            Refresh();
+        }
+    }
+
+    private void ResetChanges()
+    {
+        SelectedMonitor?.ResetPendingChanges();
+        RaiseChangeCommandsCanExecute();
+    }
+
+    /// <summary>
+    /// Reads the monitor's mode list the first time it is selected. Enumerating a few hundred modes
+    /// is quick, but there is no reason to do it for monitors the user never opens.
+    /// </summary>
+    private void EnsureModesLoaded(MonitorViewModel monitor)
+    {
+        if (monitor.ModesLoaded || !monitor.IsEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var modes = _displayService.GetSupportedModes(monitor.Model);
+            var current = _displayService.GetCurrentMode(monitor.Model);
+            monitor.LoadModes(modes, current);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Could not read the mode list for {monitor.Title}.", ex);
+        }
+    }
+
+    private void RaiseChangeCommandsCanExecute()
+    {
+        ApplyCommand.RaiseCanExecuteChanged();
+        ResetCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>Called by the view whenever the layout canvas is resized.</summary>
@@ -256,11 +404,19 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnMonitorPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MonitorViewModel.IsSelected)
-            && sender is MonitorViewModel monitor
-            && monitor.IsSelected)
+        if (sender is not MonitorViewModel monitor)
+        {
+            return;
+        }
+
+        if (e.PropertyName == nameof(MonitorViewModel.IsSelected) && monitor.IsSelected)
         {
             SelectedMonitor = monitor;
+        }
+        else if (e.PropertyName == nameof(MonitorViewModel.HasPendingChanges)
+                 && ReferenceEquals(monitor, _selectedMonitor))
+        {
+            RaiseChangeCommandsCanExecute();
         }
     }
 }

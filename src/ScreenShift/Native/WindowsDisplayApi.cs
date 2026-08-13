@@ -204,6 +204,106 @@ internal sealed class WindowsDisplayApi
         adapterDevicePath = string.Empty;
         return false;
     }
+
+    // ------------------------------------------------------------------
+    // GDI side: enumerating and applying display modes.
+    // ------------------------------------------------------------------
+
+    /// <summary>Reads the mode a display is running right now.</summary>
+    public bool TryGetCurrentMode(string gdiDeviceName, out DEVMODE mode)
+    {
+        mode = DEVMODE.Create();
+
+        if (NativeMethods.EnumDisplaySettingsEx(gdiDeviceName, DeviceModeConstants.ENUM_CURRENT_SETTINGS, ref mode, 0))
+        {
+            return true;
+        }
+
+        _logger.Warn($"EnumDisplaySettingsEx(ENUM_CURRENT_SETTINGS) failed for {gdiDeviceName}: Win32 error {Marshal.GetLastWin32Error()}.");
+        return false;
+    }
+
+    /// <summary>
+    /// Walks the driver's whole mode list. Called without EDS_ROTATEDMODE, so the modes come back
+    /// in the panel's native orientation regardless of how the display is currently turned.
+    /// </summary>
+    public List<DEVMODE> EnumerateModes(string gdiDeviceName)
+    {
+        var modes = new List<DEVMODE>();
+
+        for (var index = 0; ; index++)
+        {
+            var mode = DEVMODE.Create();
+
+            if (!NativeMethods.EnumDisplaySettingsEx(gdiDeviceName, index, ref mode, 0))
+            {
+                // The list is terminated by a plain false, not by an error code.
+                break;
+            }
+
+            modes.Add(mode);
+
+            if (index > 8192)
+            {
+                _logger.Warn($"EnumDisplaySettingsEx for {gdiDeviceName} passed 8192 modes; stopping to avoid spinning on a broken driver.");
+                break;
+            }
+        }
+
+        _logger.Debug($"EnumDisplaySettingsEx returned {modes.Count} raw mode(s) for {gdiDeviceName}.");
+        return modes;
+    }
+
+    /// <summary>
+    /// Asks the driver whether a mode would be accepted, without applying it. Cheap insurance
+    /// before a change that could otherwise leave a monitor dark.
+    /// </summary>
+    public int TestMode(string gdiDeviceName, ref DEVMODE mode) =>
+        NativeMethods.ChangeDisplaySettingsEx(
+            gdiDeviceName, ref mode, IntPtr.Zero, DeviceModeConstants.CDS_TEST, IntPtr.Zero);
+
+    /// <summary>
+    /// Stages a mode for one display without applying it. Pair with <see cref="CommitStagedChanges"/>.
+    /// </summary>
+    public int StageMode(string gdiDeviceName, ref DEVMODE mode, uint extraFlags = 0)
+    {
+        var flags = DeviceModeConstants.CDS_UPDATEREGISTRY | DeviceModeConstants.CDS_NORESET | extraFlags;
+        var result = NativeMethods.ChangeDisplaySettingsEx(gdiDeviceName, ref mode, IntPtr.Zero, flags, IntPtr.Zero);
+
+        _logger.Debug($"ChangeDisplaySettingsEx({gdiDeviceName}, flags=0x{flags:X}) -> {DeviceModeConstants.DescribeChangeResult(result)}.");
+        return result;
+    }
+
+    /// <summary>
+    /// Applies a mode to one display straight away, bypassing the staging mechanism.
+    /// </summary>
+    /// <remarks>
+    /// The fallback for when a staged batch is refused. Slower and visibly less tidy — the desktop
+    /// reshuffles once per display — but it commits each display on its own terms rather than
+    /// asking the driver to validate a whole pending configuration at once.
+    /// </remarks>
+    /// <param name="persist">
+    /// False applies the mode dynamically without writing it to the registry. Worth falling back to:
+    /// the registry write is a separate way for the call to fail, and a change that survives only
+    /// until reboot beats a change that does not happen at all.
+    /// </param>
+    public int ApplyModeImmediately(string gdiDeviceName, ref DEVMODE mode, uint extraFlags = 0, bool persist = true)
+    {
+        var flags = (persist ? DeviceModeConstants.CDS_UPDATEREGISTRY : 0u) | extraFlags;
+        var result = NativeMethods.ChangeDisplaySettingsEx(gdiDeviceName, ref mode, IntPtr.Zero, flags, IntPtr.Zero);
+
+        _logger.Debug($"ChangeDisplaySettingsEx({gdiDeviceName}, {(persist ? "immediate" : "dynamic")}, flags=0x{flags:X}) -> {DeviceModeConstants.DescribeChangeResult(result)}.");
+        return result;
+    }
+
+    /// <summary>Applies everything staged so far, in one switch.</summary>
+    public int CommitStagedChanges()
+    {
+        var result = NativeMethods.ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+
+        _logger.Debug($"ChangeDisplaySettingsEx(commit) -> {DeviceModeConstants.DescribeChangeResult(result)}.");
+        return result;
+    }
 }
 
 /// <summary>
@@ -240,6 +340,7 @@ internal static class NativeStructLayout
         Expect<DISPLAYCONFIG_TARGET_DEVICE_NAME>(420);
         Expect<DISPLAYCONFIG_SOURCE_DEVICE_NAME>(84);
         Expect<DISPLAYCONFIG_ADAPTER_NAME>(276);
+        Expect<DEVMODE>(220);
 
         _verified = true;
     }

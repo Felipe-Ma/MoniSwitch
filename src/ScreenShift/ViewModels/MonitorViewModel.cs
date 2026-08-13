@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using ScreenShift.Models;
 
 namespace ScreenShift.ViewModels;
@@ -21,6 +22,14 @@ public sealed class MonitorViewModel : ObservableObject
     private double _previewY;
     private double _previewWidth;
     private double _previewHeight;
+
+    private IReadOnlyList<DisplayMode> _modes = [];
+    private DisplayResolution? _appliedResolution;
+    private uint? _appliedRefreshHz;
+    private DisplayResolution? _selectedResolution;
+    private uint? _selectedRefreshHz;
+    private bool _makePrimary;
+    private bool _suppressRefreshRateRebuild;
 
     public MonitorViewModel(MonitorInfo model)
     {
@@ -142,6 +151,181 @@ public sealed class MonitorViewModel : ObservableObject
     /// </summary>
     public bool ShowTileDetails => _previewHeight >= 74d && _previewWidth >= 86d;
 
+    // --- Configuration (Phase 2) ---------------------------------------------
+
+    /// <summary>Distinct resolutions this monitor supports, largest first. Desktop space.</summary>
+    public ObservableCollection<DisplayResolution> AvailableResolutions { get; } = [];
+
+    /// <summary>Refresh rates available at <see cref="SelectedResolution"/>, highest first.</summary>
+    public ObservableCollection<uint> AvailableRefreshRates { get; } = [];
+
+    public bool ModesLoaded { get; private set; }
+
+    /// <summary>False for a disabled monitor, which has no GDI device to enumerate modes from.</summary>
+    public bool CanConfigure => Model.IsEnabled && ModesLoaded && AvailableResolutions.Count > 0;
+
+    public DisplayResolution? SelectedResolution
+    {
+        get => _selectedResolution;
+        set
+        {
+            if (SetProperty(ref _selectedResolution, value) && !_suppressRefreshRateRebuild)
+            {
+                RebuildRefreshRates();
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+        }
+    }
+
+    public uint? SelectedRefreshHz
+    {
+        get => _selectedRefreshHz;
+        set
+        {
+            if (SetProperty(ref _selectedRefreshHz, value))
+            {
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+        }
+    }
+
+    /// <summary>Request that this monitor become the primary. Meaningless if it already is.</summary>
+    public bool MakePrimary
+    {
+        get => _makePrimary;
+        set
+        {
+            if (SetProperty(ref _makePrimary, value))
+            {
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+        }
+    }
+
+    public bool CanBecomePrimary => Model.IsEnabled && !Model.IsPrimary;
+
+    public bool HasPendingChanges => BuildRequest() is not null;
+
+    /// <summary>
+    /// Supplies the mode list and the mode currently applied. Both come from GDI, so they are
+    /// directly comparable — deriving the current rate from the CCD value instead would mismatch
+    /// on fractional rates (59.94 Hz reads as 59 in one and rounds to 60 in the other).
+    /// </summary>
+    public void LoadModes(IReadOnlyList<DisplayMode> modes, DisplayMode? current)
+    {
+        _modes = modes;
+
+        AvailableResolutions.Clear();
+
+        foreach (var resolution in modes
+                     .Select(m => m.Resolution)
+                     .Distinct()
+                     .OrderByDescending(r => r.PixelCount))
+        {
+            AvailableResolutions.Add(resolution);
+        }
+
+        var currentResolution = current?.Resolution ?? Model.Resolution;
+
+        // A mode the driver is running but does not advertise (a custom or overclocked mode) would
+        // otherwise leave the picker blank and make "no change" look like a change.
+        if (currentResolution is { IsEmpty: false } applied && !AvailableResolutions.Contains(applied))
+        {
+            AvailableResolutions.Insert(0, applied);
+        }
+
+        _appliedResolution = currentResolution;
+        _appliedRefreshHz = current?.RefreshHz;
+
+        _suppressRefreshRateRebuild = true;
+        SelectedResolution = currentResolution;
+        _suppressRefreshRateRebuild = false;
+
+        RebuildRefreshRates();
+
+        ModesLoaded = true;
+
+        OnPropertyChanged(nameof(CanConfigure));
+        OnPropertyChanged(nameof(HasPendingChanges));
+    }
+
+    /// <summary>Discards any unapplied selections and goes back to what is running now.</summary>
+    public void ResetPendingChanges()
+    {
+        MakePrimary = false;
+
+        _suppressRefreshRateRebuild = true;
+        SelectedResolution = _appliedResolution;
+        _suppressRefreshRateRebuild = false;
+
+        RebuildRefreshRates();
+        OnPropertyChanged(nameof(HasPendingChanges));
+    }
+
+    /// <summary>The change to send to the service, or null when nothing would actually change.</summary>
+    public MonitorChangeRequest? BuildRequest()
+    {
+        if (!Model.IsEnabled)
+        {
+            return null;
+        }
+
+        var request = new MonitorChangeRequest
+        {
+            Monitor = Model,
+            Resolution = _selectedResolution is { } resolution && resolution != _appliedResolution
+                ? resolution
+                : null,
+            RefreshHz = _selectedRefreshHz is { } hz && hz != _appliedRefreshHz
+                ? hz
+                : null,
+            MakePrimary = _makePrimary && !Model.IsPrimary,
+        };
+
+        return request.ChangesAnything ? request : null;
+    }
+
+    /// <summary>
+    /// Narrows the rate list to what the chosen resolution actually supports, keeping the current
+    /// selection where possible and otherwise falling back to the fastest on offer.
+    /// </summary>
+    private void RebuildRefreshRates()
+    {
+        var previous = _selectedRefreshHz;
+
+        AvailableRefreshRates.Clear();
+
+        if (_selectedResolution is { } resolution)
+        {
+            foreach (var hz in _modes
+                         .Where(m => m.Resolution == resolution)
+                         .Select(m => m.RefreshHz)
+                         .Distinct()
+                         .OrderByDescending(hz => hz))
+            {
+                AvailableRefreshRates.Add(hz);
+            }
+        }
+
+        if (AvailableRefreshRates.Count == 0)
+        {
+            if (_appliedRefreshHz is { } applied)
+            {
+                AvailableRefreshRates.Add(applied);
+            }
+            else
+            {
+                SelectedRefreshHz = null;
+                return;
+            }
+        }
+
+        SelectedRefreshHz =
+            previous is { } wanted && AvailableRefreshRates.Contains(wanted) ? wanted
+            : _appliedRefreshHz is { } current && AvailableRefreshRates.Contains(current) ? current
+            : AvailableRefreshRates[0];
+    }
+
     /// <summary>Everything the details panel shows, built once so the view stays a dumb list.</summary>
     public IReadOnlyList<DetailRow> Details => BuildDetails();
 
@@ -156,11 +340,11 @@ public sealed class MonitorViewModel : ObservableObject
             new("Resolution", Model.Resolution?.ToString() ?? "—"),
         };
 
-        // The desktop rectangle only differs from the mode resolution when the display is turned a
-        // quarter turn, and that difference is exactly what trips up layout maths — so name it.
-        if (Model.IsRotated && Model.DesktopSize is { } desktop)
+        // Resolution above is desktop space. On a turned display the panel's own mode differs, and
+        // that is the number the signal timings are expressed in, so it is worth naming.
+        if (Model.IsRotated && Model.PanelResolution is { } panel)
         {
-            rows.Add(new DetailRow("Desktop area", $"{desktop} (rotated)"));
+            rows.Add(new DetailRow("Panel mode", $"{panel} (unrotated)"));
         }
 
         if (Model.Resolution is { IsEmpty: false } resolution)
@@ -168,8 +352,9 @@ public sealed class MonitorViewModel : ObservableObject
             rows.Add(new DetailRow("Aspect ratio", resolution.AspectRatio));
         }
 
-        // Only worth surfacing when the GPU is scaling: desktop size and signal size disagree.
-        if (Model.SignalResolution is { IsEmpty: false } signal && signal != Model.Resolution)
+        // Only when the GPU is genuinely scaling — compared in panel space, so a rotated display
+        // does not trip this.
+        if (Model.IsGpuScaled && Model.SignalResolution is { } signal)
         {
             rows.Add(new DetailRow("Signal size", $"{signal} (GPU scaling)"));
         }

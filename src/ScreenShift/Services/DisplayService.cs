@@ -64,6 +64,438 @@ public sealed class DisplayService : IDisplayService
         return ordered;
     }
 
+    // ------------------------------------------------------------------
+    // Phase 2: reading the mode list, and writing changes back.
+    // ------------------------------------------------------------------
+
+    public IReadOnlyList<DisplayMode> GetSupportedModes(MonitorInfo monitor)
+    {
+        if (monitor.GdiDeviceName is not { } device)
+        {
+            _logger.Debug($"{monitor.FriendlyName} has no GDI device name (it is disabled), so it has no mode list.");
+            return [];
+        }
+
+        var modes = _api.EnumerateModes(device)
+            .Where(m => m.dmBitsPerPel == 32)
+            // 0 and 1 are the driver's way of saying "hardware default"; they are not selectable rates.
+            .Where(m => m.dmDisplayFrequency > 1)
+            .Where(m => m.dmPelsWidth > 0 && m.dmPelsHeight > 0)
+            .Select(m => new DisplayMode((int)m.dmPelsWidth, (int)m.dmPelsHeight, m.dmDisplayFrequency))
+            .Distinct()
+            .OrderByDescending(m => m.PixelCount)
+            .ThenByDescending(m => m.RefreshHz)
+            .ToList();
+
+        _logger.Info($"{monitor.FriendlyName} ({device}) offers {modes.Count} distinct 32-bpp modes.");
+        return modes;
+    }
+
+    /// <summary>
+    /// The mode GDI reports as currently applied.
+    /// </summary>
+    /// <remarks>
+    /// Worth asking GDI rather than deriving this from <see cref="MonitorInfo.RefreshRate"/>:
+    /// DEVMODE truncates the rate, so a 59.94 Hz display reads as 59 here but rounds to 60 from the
+    /// CCD value. Only the GDI number is guaranteed to appear in the GDI mode list, which is what a
+    /// picker has to match against.
+    /// </remarks>
+    public DisplayMode? GetCurrentMode(MonitorInfo monitor)
+    {
+        if (monitor.GdiDeviceName is not { } device)
+        {
+            return null;
+        }
+
+        if (!_api.TryGetCurrentMode(device, out var mode))
+        {
+            return null;
+        }
+
+        return new DisplayMode((int)mode.dmPelsWidth, (int)mode.dmPelsHeight, mode.dmDisplayFrequency);
+    }
+
+    public DisplaySnapshot CaptureSnapshot()
+    {
+        var entries = new List<SavedDisplayMode>();
+
+        foreach (var monitor in GetMonitors())
+        {
+            if (!monitor.IsEnabled || monitor.GdiDeviceName is not { } device)
+            {
+                continue;
+            }
+
+            if (!_api.TryGetCurrentMode(device, out var mode))
+            {
+                _logger.Warn($"Could not capture the current mode for {monitor.FriendlyName} ({device}); it will not be restorable.");
+                continue;
+            }
+
+            entries.Add(new SavedDisplayMode(device, mode, monitor.IsPrimary));
+        }
+
+        var snapshot = new DisplaySnapshot(entries);
+        _logger.Info($"Captured display snapshot: {snapshot}.");
+        return snapshot;
+    }
+
+    public ApplyResult Apply(IReadOnlyList<MonitorChangeRequest> requests)
+    {
+        var effective = requests.Where(r => r.ChangesAnything).ToList();
+        if (effective.Count == 0)
+        {
+            return ApplyResult.Ok();
+        }
+
+        var primaryRequests = effective.Where(r => r.MakePrimary).ToList();
+        if (primaryRequests.Count > 1)
+        {
+            return ApplyResult.Fail("Only one display can be the primary.");
+        }
+
+        _logger.Info($"Applying: {string.Join(" | ", effective)}");
+
+        // Read every enabled display, not just the ones being changed — a primary switch moves all
+        // of them, because the primary is what defines the desktop origin.
+        var monitors = GetMonitors().Where(m => m is { IsEnabled: true, GdiDeviceName: not null }).ToList();
+        var working = new Dictionary<string, DEVMODE>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var monitor in monitors)
+        {
+            if (!_api.TryGetCurrentMode(monitor.GdiDeviceName!, out var mode))
+            {
+                return ApplyResult.Fail($"Could not read the current mode for {monitor.FriendlyName}.");
+            }
+
+            working[monitor.GdiDeviceName!] = mode;
+        }
+
+        var original = new Dictionary<string, DEVMODE>(working, StringComparer.OrdinalIgnoreCase);
+        var originalPrimary = monitors.FirstOrDefault(m => m.IsPrimary)?.GdiDeviceName;
+        var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // --- 1. resolution and refresh rate -------------------------------
+        foreach (var request in effective)
+        {
+            if (request.Monitor.GdiDeviceName is not { } device || !working.TryGetValue(device, out var mode))
+            {
+                return ApplyResult.Fail($"{request.Monitor.FriendlyName} is not currently enabled, so its mode cannot be changed.");
+            }
+
+            if (request.Resolution is null && request.RefreshHz is null)
+            {
+                continue;
+            }
+
+            if (request.Resolution is { } resolution)
+            {
+                mode.dmPelsWidth = (uint)resolution.Width;
+                mode.dmPelsHeight = (uint)resolution.Height;
+            }
+
+            if (request.RefreshHz is { } hz)
+            {
+                mode.dmDisplayFrequency = hz;
+            }
+
+            // Replace rather than extend the field mask: naming only what is being changed leaves
+            // orientation and scaling alone, which is what "change the refresh rate" should mean.
+            mode.dmFields = DeviceModeConstants.DM_BITSPERPEL
+                | DeviceModeConstants.DM_PELSWIDTH
+                | DeviceModeConstants.DM_PELSHEIGHT
+                | DeviceModeConstants.DM_DISPLAYFREQUENCY;
+
+            working[device] = mode;
+            changed.Add(device);
+        }
+
+        // --- 2. validate before touching anything --------------------------
+        // CDS_TEST asks the driver whether it would accept the mode. Doing this for the whole batch
+        // up front means a bad mode is rejected while every display is still showing a picture.
+        foreach (var device in changed)
+        {
+            var candidate = working[device];
+            var testResult = _api.TestMode(device, ref candidate);
+
+            if (testResult != DeviceModeConstants.DISP_CHANGE_SUCCESSFUL)
+            {
+                var description = DeviceModeConstants.DescribeChangeResult(testResult);
+                _logger.Warn($"Rejected {candidate.dmPelsWidth} × {candidate.dmPelsHeight} @ {candidate.dmDisplayFrequency} Hz for {device}: {description}.");
+
+                return ApplyResult.Fail(
+                    $"{DescribeDevice(monitors, device)} will not accept {candidate.dmPelsWidth} × {candidate.dmPelsHeight} at {candidate.dmDisplayFrequency} Hz ({description}). Nothing was changed.");
+            }
+        }
+
+        // --- 3. primary display ---------------------------------------------
+        string? newPrimaryDevice = null;
+
+        if (primaryRequests.Count == 1)
+        {
+            var target = primaryRequests[0].Monitor;
+
+            if (target.GdiDeviceName is not { } device || !working.ContainsKey(device))
+            {
+                return ApplyResult.Fail($"{target.FriendlyName} is not currently enabled, so it cannot become the primary display.");
+            }
+
+            newPrimaryDevice = device;
+
+            // Windows defines the primary as the display at (0,0), so making a different display
+            // primary means translating the entire desktop by that display's current offset.
+            var origin = working[device].dmPosition;
+
+            foreach (var key in working.Keys.ToList())
+            {
+                var mode = working[key];
+
+                mode.dmPosition.x -= origin.x;
+                mode.dmPosition.y -= origin.y;
+                mode.dmFields |= DeviceModeConstants.DM_POSITION;
+
+                working[key] = mode;
+                changed.Add(key);
+            }
+
+            _logger.Info($"Making {target.FriendlyName} primary; translating all displays by ({-origin.x}, {-origin.y}).");
+        }
+
+        // --- 4. write the changes out ----------------------------------------
+        var push = PushChanges(changed, working, newPrimaryDevice);
+
+        if (!push.Ok)
+        {
+            _logger.Error($"Apply failed ({push.Error}). Rolling back.");
+
+            var rolledBack = RollBack(original, originalPrimary);
+            return ApplyResult.Fail($"Windows refused the change ({push.Error}).", rolledBack);
+        }
+
+        _logger.Info("Apply committed successfully.");
+        return ApplyResult.Ok();
+    }
+
+    /// <summary>
+    /// Writes a set of modes out, preferring one atomic switch and falling back to per-display
+    /// application if the driver will not take the batch.
+    /// </summary>
+    /// <param name="allowDynamicFallback">
+    /// False when the caller specifically needs the configuration written to the registry, so a
+    /// change that applies but does not persist should still count as a failure.
+    /// </param>
+    private (bool Ok, string? Error) PushChanges(
+        IReadOnlyCollection<string> devices,
+        IReadOnlyDictionary<string, DEVMODE> modes,
+        string? primaryDevice,
+        bool allowDynamicFallback = true)
+    {
+        var staged = PushChangesOnce(devices, modes, primaryDevice, PushStrategy.StagedBatch);
+        if (staged.Ok)
+        {
+            return staged;
+        }
+
+        // A staged batch asks the driver to validate a whole pending configuration at once, and it
+        // refuses the entire batch if any intermediate state looks wrong. One display at a time is
+        // uglier to watch, but each step stands on its own.
+        _logger.Warn($"Staged application was refused ({staged.Error}); retrying one display at a time.");
+
+        var immediate = PushChangesOnce(devices, modes, primaryDevice, PushStrategy.ImmediatePersisted);
+        if (immediate.Ok || !allowDynamicFallback)
+        {
+            return immediate;
+        }
+
+        // Last resort: skip the registry write. Persisting the mode is a separate failure mode from
+        // applying it, and a configuration that lasts until the next reboot is far better than
+        // leaving the user staring at one that is wrong now.
+        _logger.Warn($"Persisted application was refused ({immediate.Error}); retrying without writing to the registry.");
+
+        var dynamicResult = PushChangesOnce(devices, modes, primaryDevice, PushStrategy.DynamicOnly);
+        if (dynamicResult.Ok)
+        {
+            _logger.Warn("Applied dynamically. The configuration is active but was not persisted, so a reboot will undo it.");
+        }
+
+        return dynamicResult;
+    }
+
+    private enum PushStrategy
+    {
+        /// <summary>Stage every display, then commit them together.</summary>
+        StagedBatch,
+
+        /// <summary>Apply each display on its own, persisting to the registry.</summary>
+        ImmediatePersisted,
+
+        /// <summary>Apply each display on its own without persisting.</summary>
+        DynamicOnly,
+    }
+
+    private (bool Ok, string? Error) PushChangesOnce(
+        IReadOnlyCollection<string> devices,
+        IReadOnlyDictionary<string, DEVMODE> modes,
+        string? primaryDevice,
+        PushStrategy strategy)
+    {
+        // The display that is to be primary goes first. Windows insists on a primary sitting at the
+        // desktop origin, so moving any other display before that anchor exists leaves the
+        // configuration momentarily without one — which the driver rejects.
+        var ordered = devices
+            .OrderByDescending(d => string.Equals(d, primaryDevice, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var device in ordered)
+        {
+            if (!modes.TryGetValue(device, out var mode))
+            {
+                continue;
+            }
+
+            var extraFlags = string.Equals(device, primaryDevice, StringComparison.OrdinalIgnoreCase)
+                ? DeviceModeConstants.CDS_SET_PRIMARY
+                : 0u;
+
+            var result = strategy switch
+            {
+                PushStrategy.StagedBatch => _api.StageMode(device, ref mode, extraFlags),
+                PushStrategy.ImmediatePersisted => _api.ApplyModeImmediately(device, ref mode, extraFlags),
+                _ => _api.ApplyModeImmediately(device, ref mode, extraFlags, persist: false),
+            };
+
+            if (result != DeviceModeConstants.DISP_CHANGE_SUCCESSFUL)
+            {
+                return (false, $"{device}: {DeviceModeConstants.DescribeChangeResult(result)}");
+            }
+        }
+
+        if (strategy != PushStrategy.StagedBatch)
+        {
+            return (true, null);
+        }
+
+        var commit = _api.CommitStagedChanges();
+
+        return commit == DeviceModeConstants.DISP_CHANGE_SUCCESSFUL
+            ? (true, null)
+            : (false, $"commit: {DeviceModeConstants.DescribeChangeResult(commit)}");
+    }
+
+    /// <summary>
+    /// Writes whatever is on screen right now into the registry, so it survives a reboot.
+    /// </summary>
+    /// <remarks>
+    /// Applying a mode and persisting it are separate operations that can fail independently. When
+    /// only the dynamic apply succeeds the desktop looks right but the saved configuration still
+    /// describes the old one, and the next reboot brings it back. This re-commits the live state to
+    /// close that gap, and reports failure rather than falling back, since not persisting is
+    /// precisely the thing it exists to fix.
+    /// </remarks>
+    public ApplyResult PersistCurrentConfiguration()
+    {
+        var modes = new Dictionary<string, DEVMODE>(StringComparer.OrdinalIgnoreCase);
+        string? primaryDevice = null;
+
+        foreach (var monitor in GetMonitors())
+        {
+            if (!monitor.IsEnabled || monitor.GdiDeviceName is not { } device)
+            {
+                continue;
+            }
+
+            if (!_api.TryGetCurrentMode(device, out var mode))
+            {
+                return ApplyResult.Fail($"Could not read the current mode for {monitor.FriendlyName}.");
+            }
+
+            mode.dmFields = DeviceModeConstants.DM_BITSPERPEL
+                | DeviceModeConstants.DM_PELSWIDTH
+                | DeviceModeConstants.DM_PELSHEIGHT
+                | DeviceModeConstants.DM_DISPLAYFREQUENCY
+                | DeviceModeConstants.DM_POSITION
+                | DeviceModeConstants.DM_DISPLAYORIENTATION;
+
+            modes[device] = mode;
+
+            if (monitor.IsPrimary)
+            {
+                primaryDevice = device;
+            }
+        }
+
+        if (modes.Count == 0)
+        {
+            return ApplyResult.Fail("There are no enabled displays to persist.");
+        }
+
+        _logger.Info($"Persisting the current configuration for {modes.Count} display(s).");
+
+        var push = PushChanges(modes.Keys, modes, primaryDevice, allowDynamicFallback: false);
+
+        return push.Ok
+            ? ApplyResult.Ok()
+            : ApplyResult.Fail($"The current configuration could not be written to the registry ({push.Error}).");
+    }
+
+    public ApplyResult Restore(DisplaySnapshot snapshot)
+    {
+        if (snapshot.IsEmpty)
+        {
+            return ApplyResult.Fail("There is nothing to restore.");
+        }
+
+        _logger.Info($"Restoring {snapshot}.");
+
+        var modes = snapshot.Entries.ToDictionary(e => e.GdiDeviceName, e => e.Mode, StringComparer.OrdinalIgnoreCase);
+        var primary = snapshot.Entries.FirstOrDefault(e => e.WasPrimary)?.GdiDeviceName;
+
+        return RollBack(modes, primary)
+            ? ApplyResult.Ok()
+            : ApplyResult.Fail("The previous display configuration could not be fully restored. See the log for details.");
+    }
+
+    /// <summary>
+    /// Puts a set of saved modes back. Every field is named explicitly here — unlike a forward
+    /// change, a restore is meant to reinstate the state wholesale, orientation and position included.
+    /// </summary>
+    /// <returns>True when everything was restored.</returns>
+    private bool RollBack(IReadOnlyDictionary<string, DEVMODE> modes, string? primaryDevice)
+    {
+        var restorable = new Dictionary<string, DEVMODE>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (device, saved) in modes)
+        {
+            var mode = saved;
+
+            // Unlike a forward change, a restore reinstates state wholesale, so every field it
+            // captured is named explicitly rather than left to be inherited.
+            mode.dmFields = DeviceModeConstants.DM_BITSPERPEL
+                | DeviceModeConstants.DM_PELSWIDTH
+                | DeviceModeConstants.DM_PELSHEIGHT
+                | DeviceModeConstants.DM_DISPLAYFREQUENCY
+                | DeviceModeConstants.DM_POSITION
+                | DeviceModeConstants.DM_DISPLAYORIENTATION;
+
+            restorable[device] = mode;
+        }
+
+        var push = PushChanges(restorable.Keys, restorable, primaryDevice);
+
+        if (!push.Ok)
+        {
+            _logger.Error($"Restore failed: {push.Error}.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string DescribeDevice(IEnumerable<MonitorInfo> monitors, string gdiDeviceName) =>
+        monitors.FirstOrDefault(m => string.Equals(m.GdiDeviceName, gdiDeviceName, StringComparison.OrdinalIgnoreCase))
+            ?.FriendlyName
+        ?? gdiDeviceName;
+
     /// <summary>
     /// Collapses the path list to one entry per physical target, preferring the active path.
     /// Grouping on (adapter, target) rather than on the friendly name is what keeps two identical
@@ -163,7 +595,11 @@ public sealed class DisplayService : IDisplayService
             adapterPathCache[adapterId] = adapterPath;
         }
 
+        var orientation = MapOrientation(path.targetInfo.rotation);
+        var isRotated = orientation is DisplayOrientation.Portrait or DisplayOrientation.PortraitFlipped;
+
         DisplayResolution? resolution = null;
+        DisplayResolution? panelResolution = null;
         DisplayResolution? signalResolution = null;
         DisplayPosition? position = null;
         var refreshRate = RefreshRate.Unknown;
@@ -173,7 +609,13 @@ public sealed class DisplayService : IDisplayService
         {
             if (TryResolveSourceMode(snapshot, path, out var sourceMode))
             {
-                resolution = new DisplayResolution((int)sourceMode.width, (int)sourceMode.height);
+                // The source mode is the surface before rotation, because rotation happens when the
+                // GPU scans it out. Desktop space is what the rest of the app works in, so transpose
+                // for quarter turns here. A 180° turn is not a transpose and must not swap.
+                var panel = new DisplayResolution((int)sourceMode.width, (int)sourceMode.height);
+
+                panelResolution = panel;
+                resolution = isRotated ? new DisplayResolution(panel.Height, panel.Width) : panel;
                 position = new DisplayPosition(sourceMode.position.x, sourceMode.position.y);
             }
             else
@@ -223,9 +665,10 @@ public sealed class DisplayService : IDisplayService
             // positioned relative to it, which is also why coordinates can be negative.
             IsPrimary = isActive && position is { X: 0, Y: 0 },
             Resolution = resolution,
+            PanelResolution = panelResolution,
             SignalResolution = signalResolution,
             RefreshRate = refreshRate,
-            Orientation = MapOrientation(path.targetInfo.rotation),
+            Orientation = orientation,
             Position = position,
             Connection = MapConnection(path.targetInfo.outputTechnology),
             IsInterlaced = interlaced,

@@ -65,12 +65,22 @@ public sealed class MonitorInfo
     public bool IsPrimary { get; init; }
 
     /// <summary>
-    /// The display mode's resolution, as Windows Settings presents it — always in the panel's
-    /// native orientation, so a rotated 1440p monitor still reads 2560 × 1440. This is the value a
-    /// resolution picker operates on. For the rectangle it occupies on the desktop, use
-    /// <see cref="DesktopSize"/> or <see cref="Bounds"/>. Null while disabled.
+    /// Resolution in desktop space, with rotation already applied — a 1440p panel turned portrait
+    /// reads 1440 × 2560. Null while disabled.
     /// </summary>
+    /// <remarks>
+    /// This is deliberately the rotated value rather than the panel's native one, because the GDI
+    /// mode list works in the same space: EnumDisplaySettings on a portrait display offers
+    /// 1440 × 2560, not 2560 × 1440. Modelling resolution any other way would leave a monitor's
+    /// current resolution absent from its own list of supported ones.
+    /// </remarks>
     public DisplayResolution? Resolution { get; init; }
+
+    /// <summary>
+    /// The same mode in the panel's native orientation, straight off the CCD source mode. Kept
+    /// because it is the space the signal timings are expressed in.
+    /// </summary>
+    public DisplayResolution? PanelResolution { get; init; }
 
     /// <summary>
     /// Resolution of the signal actually going down the cable. Differs from <see cref="Resolution"/>
@@ -93,28 +103,22 @@ public sealed class MonitorInfo
     /// <summary>True when this target is part of a clone group (more than one target on one source).</summary>
     public bool IsCloned { get; init; }
 
-    /// <summary>Quarter-turned, so the desktop rectangle is the mode resolution transposed.</summary>
+    /// <summary>Quarter-turned, so desktop space and panel space are transposed relative to each other.</summary>
     public bool IsRotated =>
         Orientation is DisplayOrientation.Portrait or DisplayOrientation.PortraitFlipped;
 
     /// <summary>
-    /// Size of the rectangle this monitor occupies on the desktop.
+    /// True when the GPU is scaling: the signal on the cable is a different size from the surface
+    /// being scanned out. Compared in panel space, since rotation alone is not scaling.
     /// </summary>
-    /// <remarks>
-    /// The CCD source mode reports the surface <em>before</em> rotation — a portrait 1440p monitor
-    /// still comes back as 2560 × 1440 — because rotation is applied when the GPU scans the surface
-    /// out to the connector. Windows' own desktop rectangle for that monitor is 1440 × 2560, so the
-    /// transpose has to happen here or every layout calculation lands in the wrong place.
-    /// A 180° rotation is not a transpose and deliberately does not swap.
-    /// </remarks>
-    public DisplayResolution? DesktopSize =>
-        Resolution is { IsEmpty: false } r
-            ? IsRotated ? new DisplayResolution(r.Height, r.Width) : r
-            : null;
+    public bool IsGpuScaled =>
+        PanelResolution is { IsEmpty: false } panel
+        && SignalResolution is { IsEmpty: false } signal
+        && panel != signal;
 
     /// <summary>Rectangle this monitor occupies on the virtual desktop, or null while disabled.</summary>
     public (int X, int Y, int Width, int Height)? Bounds =>
-        Position is { } p && DesktopSize is { } size
+        Position is { } p && Resolution is { IsEmpty: false } size
             ? (p.X, p.Y, size.Width, size.Height)
             : null;
 

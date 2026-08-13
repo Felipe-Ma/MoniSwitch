@@ -101,6 +101,43 @@ internal static class NativeMethods
     [DllImport(User32, ExactSpelling = true)]
     internal static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_ADAPTER_NAME requestPacket);
 
+    /// <summary>
+    /// Reads one display mode. <paramref name="iModeNum"/> is either an index into the driver's
+    /// mode list (call with 0, 1, 2 ... until it returns false) or ENUM_CURRENT_SETTINGS /
+    /// ENUM_REGISTRY_SETTINGS.
+    /// </summary>
+    [DllImport(User32, CharSet = CharSet.Unicode, EntryPoint = "EnumDisplaySettingsExW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumDisplaySettingsEx(
+        string? lpszDeviceName,
+        int iModeNum,
+        ref DEVMODE lpDevMode,
+        uint dwFlags);
+
+    /// <summary>
+    /// Applies (or with CDS_NORESET, stages) a mode for one display. Returns a DISP_CHANGE_* code,
+    /// not a Win32 error, and hwnd must always be null.
+    /// </summary>
+    [DllImport(User32, CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
+    internal static extern int ChangeDisplaySettingsEx(
+        string? lpszDeviceName,
+        ref DEVMODE lpDevMode,
+        IntPtr hwnd,
+        uint dwflags,
+        IntPtr lParam);
+
+    /// <summary>
+    /// The null-DEVMODE form. Called with a null device name and no flags, it commits everything
+    /// previously staged with CDS_NORESET.
+    /// </summary>
+    [DllImport(User32, CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
+    internal static extern int ChangeDisplaySettingsEx(
+        string? lpszDeviceName,
+        IntPtr lpDevMode,
+        IntPtr hwnd,
+        uint dwflags,
+        IntPtr lParam);
+
     [DllImport(Dwmapi, ExactSpelling = true)]
     internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

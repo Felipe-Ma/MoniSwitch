@@ -19,4 +19,10 @@
     -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The probe is this project's diagnostic harness; it needs the raw native layer to dump
+         DEVMODE values that the clean models deliberately hide. -->
+    <InternalsVisibleTo Include="ScreenShift.Probe" />
+  </ItemGroup>
+
 </Project>

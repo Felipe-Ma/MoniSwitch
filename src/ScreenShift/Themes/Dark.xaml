@@ -100,6 +100,165 @@
         </Setter>
     </Style>
 
+    <Style x:Key="Button.Accent" TargetType="Button" BasedOn="{StaticResource Button.Ghost}">
+        <Setter Property="Background" Value="{StaticResource Brush.Accent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+        <Setter Property="Foreground" Value="#0E0E11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- ============================ Inputs ============================ -->
+    <Style TargetType="ComboBox">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Ui}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+        <Setter Property="Background" Value="{StaticResource Brush.SurfaceAlt}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton x:Name="Toggle"
+                                      Focusable="False"
+                                      ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Chrome"
+                                            Background="{StaticResource Brush.SurfaceAlt}"
+                                            BorderBrush="{StaticResource Brush.Border}"
+                                            BorderThickness="1"
+                                            CornerRadius="7">
+                                        <Path x:Name="Arrow"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,11,0"
+                                              Data="M 0 0 L 4 4 L 8 0"
+                                              Stroke="{StaticResource Brush.TextMuted}"
+                                              StrokeThickness="1.4" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.SurfaceHover}" />
+                                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.BorderStrong}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+
+                        <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"
+                                          HorizontalAlignment="Left"
+                                          IsHitTestVisible="False" />
+
+                        <Popup x:Name="PART_Popup"
+                               AllowsTransparency="True"
+                               Placement="Bottom"
+                               Focusable="False"
+                               PopupAnimation="Fade"
+                               IsOpen="{TemplateBinding IsDropDownOpen}">
+                            <Border Background="{StaticResource Brush.SurfaceAlt}"
+                                    BorderBrush="{StaticResource Brush.BorderStrong}"
+                                    BorderThickness="1"
+                                    CornerRadius="7"
+                                    Margin="0,4,0,0"
+                                    MinWidth="{TemplateBinding ActualWidth}"
+                                    MaxHeight="320">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Ui}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+        <Setter Property="Padding" Value="11,7" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="5" Margin="3,1">
+                        <ContentPresenter Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.SurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="CheckBox">
+        <Setter Property="FontFamily" Value="{StaticResource Font.Ui}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                        <Border x:Name="Box"
+                                Width="17" Height="17"
+                                CornerRadius="4"
+                                Background="{StaticResource Brush.SurfaceAlt}"
+                                BorderBrush="{StaticResource Brush.BorderStrong}"
+                                BorderThickness="1"
+                                VerticalAlignment="Center"
+                                Margin="0,0,9,0">
+                            <Path x:Name="Tick"
+                                  Data="M 0 4 L 3.5 7.5 L 9 1"
+                                  Stroke="#0E0E11"
+                                  StrokeThickness="1.9"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Visibility="Collapsed" />
+                        </Border>
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{StaticResource Brush.Accent}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                            <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ============================ Scrollbars ============================ -->
     <!-- The stock WPF scrollbar is light grey chrome that looks pasted on over a dark app. -->
     <Style x:Key="ScrollBar.Thumb" TargetType="Thumb">

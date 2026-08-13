@@ -43,7 +43,10 @@ internal static class WindowCapture
                 });
 
                 var logger = new FileLogger();
-                var viewModel = new MainViewModel(new DisplayService(logger), logger);
+                var viewModel = new MainViewModel(
+                    new DisplayService(logger),
+                    new DialogUserConfirmation(() => null),
+                    logger);
 
                 var window = new MainWindow(viewModel)
                 {

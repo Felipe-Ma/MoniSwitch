@@ -6,9 +6,52 @@ using ScreenShift.Services;
 // against real hardware without a UI in the way — run it, unplug something, run it again.
 //
 //   ScreenShift.Probe                      dump the detected monitors
+//   ScreenShift.Probe --modes              dump raw DEVMODE data and supported modes
+//   ScreenShift.Probe --test-apply <kind>  apply a change to a non-primary display, then undo it
 //   ScreenShift.Probe --capture <file.png> render the main window to an image instead
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+if (args.Any(a => string.Equals(a, "--modes", StringComparison.OrdinalIgnoreCase)))
+{
+    return ModeDump.Run();
+}
+
+if (args.Any(a => string.Equals(a, "--persist", StringComparison.OrdinalIgnoreCase)))
+{
+    var persistLogger = new ConsoleLogger();
+    var persistResult = new DisplayService(persistLogger).PersistCurrentConfiguration();
+
+    Console.WriteLine(persistResult.Succeeded
+        ? "The current display configuration was written to the registry."
+        : $"Could not persist: {persistResult.Message}");
+
+    return persistResult.Succeeded ? 0 : 1;
+}
+
+var setIndex = Array.FindIndex(args, a => string.Equals(a, "--set", StringComparison.OrdinalIgnoreCase));
+if (setIndex >= 0)
+{
+    if (setIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--set needs a display number, e.g. --set 1 --refresh 180 --primary");
+        return 2;
+    }
+
+    return SetCommand.Run(args, setIndex + 1);
+}
+
+var testIndex = Array.FindIndex(args, a => string.Equals(a, "--test-apply", StringComparison.OrdinalIgnoreCase));
+if (testIndex >= 0)
+{
+    if (testIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--test-apply needs a change type: refresh, resolution or primary.");
+        return 2;
+    }
+
+    return ApplyTest.Run(args[testIndex + 1]);
+}
 
 var captureIndex = Array.FindIndex(args, a => string.Equals(a, "--capture", StringComparison.OrdinalIgnoreCase));
 if (captureIndex >= 0)
@@ -41,8 +84,8 @@ try
         Write("Windows name", monitor.GdiDeviceName ?? "—");
         Write("Display number", monitor.DisplayNumber?.ToString() ?? "—");
         Write("State", Describe(monitor));
-        Write("Resolution", monitor.Resolution?.ToString() ?? "—");
-        Write("Desktop area", monitor.DesktopSize?.ToString() + (monitor.IsRotated ? "  (rotated)" : string.Empty));
+        Write("Resolution", monitor.Resolution?.ToString() + (monitor.IsRotated ? "  (desktop space)" : string.Empty));
+        Write("Panel mode", monitor.PanelResolution?.ToString() ?? "—");
         Write("Aspect", monitor.Resolution?.AspectRatio ?? "—");
         Write("Signal size", monitor.SignalResolution?.ToString() ?? "—");
         Write("Refresh rate", monitor.RefreshRate.ToString() + (monitor.IsInterlaced ? " (interlaced)" : string.Empty));

@@ -30,9 +30,16 @@ public partial class App : Application
             // marshalled layout is wrong, failing here is far better than passing user32 a
             // misshapen buffer and reading back plausible-looking nonsense.
             var displayService = new DisplayService(_logger);
-            var viewModel = new MainViewModel(displayService, _logger);
 
-            var window = new MainWindow(viewModel);
+            // The confirmation dialog wants the main window as its owner, but the window needs the
+            // view model, which needs the confirmation service. A late-bound accessor unties that
+            // knot without an ordering hack.
+            MainWindow? window = null;
+            var confirmation = new DialogUserConfirmation(() => window);
+
+            var viewModel = new MainViewModel(displayService, confirmation, _logger);
+
+            window = new MainWindow(viewModel);
             MainWindow = window;
             window.Show();
         }
