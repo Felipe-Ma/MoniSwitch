@@ -6,6 +6,9 @@ namespace ScreenShift.ViewModels;
 /// <summary>A label/value pair shown in the details panel.</summary>
 public sealed record DetailRow(string Label, string Value);
 
+/// <summary>An orientation with its human label, for the picker.</summary>
+public sealed record OrientationChoice(DisplayOrientation Value, string Label);
+
 /// <summary>
 /// Presentation wrapper around one <see cref="MonitorInfo"/>.
 /// </summary>
@@ -30,12 +33,23 @@ public sealed class MonitorViewModel : ObservableObject
     private uint? _selectedRefreshHz;
     private bool _makePrimary;
     private bool _wantEnabled;
+    private OrientationChoice _selectedOrientation;
     private bool _suppressRefreshRateRebuild;
+
+    /// <summary>Shared instances so ComboBox SelectedItem matching works by reference.</summary>
+    public static IReadOnlyList<OrientationChoice> OrientationChoices { get; } =
+    [
+        new(DisplayOrientation.Landscape, "Landscape"),
+        new(DisplayOrientation.Portrait, "Portrait"),
+        new(DisplayOrientation.LandscapeFlipped, "Landscape (flipped)"),
+        new(DisplayOrientation.PortraitFlipped, "Portrait (flipped)"),
+    ];
 
     public MonitorViewModel(MonitorInfo model)
     {
         Model = model;
         _wantEnabled = model.IsEnabled;
+        _selectedOrientation = ChoiceFor(model.Orientation);
     }
 
     public MonitorInfo Model { get; }
@@ -191,6 +205,20 @@ public sealed class MonitorViewModel : ObservableObject
         }
     }
 
+    public IReadOnlyList<OrientationChoice> AvailableOrientations => OrientationChoices;
+
+    public OrientationChoice SelectedOrientation
+    {
+        get => _selectedOrientation;
+        set
+        {
+            if (SetProperty(ref _selectedOrientation, value))
+            {
+                OnPropertyChanged(nameof(HasPendingChanges));
+            }
+        }
+    }
+
     /// <summary>Request that this monitor become the primary. Meaningless if it already is.</summary>
     public bool MakePrimary
     {
@@ -272,6 +300,7 @@ public sealed class MonitorViewModel : ObservableObject
     {
         MakePrimary = false;
         WantEnabled = Model.IsEnabled;
+        SelectedOrientation = ChoiceFor(Model.Orientation);
 
         _suppressRefreshRateRebuild = true;
         SelectedResolution = _appliedResolution;
@@ -288,21 +317,45 @@ public sealed class MonitorViewModel : ObservableObject
         // this same request has no mode list yet, so there is nothing meaningful to ask for.
         var configurable = Model.IsEnabled;
 
+        DisplayResolution? resolution =
+            configurable && _selectedResolution is { } selected && selected != _appliedResolution
+                ? selected
+                : null;
+
+        DisplayOrientation? orientation =
+            configurable && _selectedOrientation.Value != Model.Orientation
+                ? _selectedOrientation.Value
+                : null;
+
+        // The resolution picker lists modes in the current desktop space, but the engine reads an
+        // explicit resolution as being in the final orientation's space — so a quarter-turn change
+        // transposes the selection on its way into the request.
+        if (resolution is { } r && orientation is { } o)
+        {
+            var willBeRotated = o is DisplayOrientation.Portrait or DisplayOrientation.PortraitFlipped;
+            if (willBeRotated != Model.IsRotated)
+            {
+                resolution = new DisplayResolution(r.Height, r.Width);
+            }
+        }
+
         var request = new MonitorChangeRequest
         {
             Monitor = Model,
             Enabled = _wantEnabled != Model.IsEnabled ? _wantEnabled : null,
-            Resolution = configurable && _selectedResolution is { } resolution && resolution != _appliedResolution
-                ? resolution
-                : null,
+            Resolution = resolution,
             RefreshHz = configurable && _selectedRefreshHz is { } hz && hz != _appliedRefreshHz
                 ? hz
                 : null,
+            Orientation = orientation,
             MakePrimary = configurable && _makePrimary && !Model.IsPrimary,
         };
 
         return request.ChangesAnything ? request : null;
     }
+
+    private static OrientationChoice ChoiceFor(DisplayOrientation orientation) =>
+        OrientationChoices.First(c => c.Value == orientation);
 
     /// <summary>
     /// Narrows the rate list to what the chosen resolution actually supports, keeping the current

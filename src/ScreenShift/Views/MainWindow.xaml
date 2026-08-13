@@ -418,6 +418,11 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
+                                    <TextBlock Text="Orientation" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
+                                    <ComboBox ItemsSource="{Binding AvailableOrientations}"
+                                              SelectedItem="{Binding SelectedOrientation, Mode=TwoWay}"
+                                              DisplayMemberPath="Label" />
+
                                     <CheckBox Content="Make this the primary display"
                                               IsChecked="{Binding MakePrimary, Mode=TwoWay}"
                                               IsEnabled="{Binding CanBecomePrimary}"
