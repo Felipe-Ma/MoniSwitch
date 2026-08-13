@@ -57,11 +57,10 @@ public sealed class ProfileViewModel : ObservableObject
             var primary = Model.Monitors.FirstOrDefault(m => m is { Enabled: true, Primary: true })?.FriendlyName;
 
             var counts = $"{on}/{total} displays on";
-            return primary is null ? counts : $"{counts} · primary {primary}";
+            var summary = primary is null ? counts : $"{counts} · primary {primary}";
+            return $"{summary} · updated {Model.UpdatedAt:d MMM HH:mm}";
         }
     }
-
-    public string UpdatedText => $"Updated {Model.UpdatedAt:d MMM HH:mm}";
 
     /// <summary>Per-monitor breakdown, shown as the card's tooltip.</summary>
     public string DetailToolTip => string.Join("\n", Model.Monitors);

@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="clr-namespace:ScreenShift.Views"
         Title="ScreenShift"
-        Height="780" Width="1200"
-        MinHeight="600" MinWidth="960"
+        Height="900" Width="1240"
+        MinHeight="720" MinWidth="1060"
         WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
@@ -75,7 +75,7 @@
 
         <!-- Card in the list below the canvas. Includes disabled monitors, which have no tile. -->
         <DataTemplate x:Key="MonitorCardTemplate">
-            <Border Width="234" Margin="0,0,12,12" Padding="14,13" CornerRadius="10">
+            <Border Width="224" Margin="0,0,10,10" Padding="13,11" CornerRadius="10">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
@@ -129,10 +129,10 @@
                         </StackPanel>
                     </Grid>
 
-                    <TextBlock Text="{Binding ResolutionText}" FontSize="19" Margin="0,14,0,0" />
+                    <TextBlock Text="{Binding ResolutionText}" FontSize="18" Margin="0,10,0,0" />
                     <TextBlock Text="{Binding RefreshRateText}" Style="{StaticResource Text.Muted}" Margin="0,1,0,0" />
 
-                    <StackPanel Orientation="Horizontal" Margin="0,11,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,9,0,0">
                         <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,7,0">
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">
@@ -193,7 +193,9 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="26,22,14,26">
+            <!-- Sized so nothing here scrolls at the default window size; the scroll viewer is a
+                 safety net for small windows, not part of the design. -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="26,16,14,14">
                 <StackPanel>
 
                     <!-- Enumeration failure banner -->
@@ -219,7 +221,7 @@
 
                     <!-- Scale model of the desktop. Positions come from the view model so that
                          drag-and-drop repositioning can later write straight back into them. -->
-                    <Border Style="{StaticResource Card}" Height="320" Padding="1">
+                    <Border Style="{StaticResource Card}" Height="280" Padding="1">
                         <Grid x:Name="LayoutHost" ClipToBounds="True" SizeChanged="OnLayoutHostSizeChanged">
                             <TextBlock Text="No enabled displays"
                                        Style="{StaticResource Text.Faint}"
@@ -247,7 +249,7 @@
 
                     <TextBlock Text="{Binding VirtualDesktopText, StringFormat='Virtual desktop {0}'}"
                                Style="{StaticResource Text.Faint}"
-                               Margin="3,8,0,20" />
+                               Margin="3,7,0,14" />
 
                     <ListBox Style="{StaticResource ListBox.Bare}"
                              ItemsSource="{Binding Monitors}"
@@ -259,7 +261,7 @@
                         </ListBox.ItemsPanel>
                     </ListBox>
 
-                    <Grid Margin="2,14,0,10">
+                    <Grid Margin="2,12,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -282,10 +284,12 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- Capped: many profiles scroll inside this list rather than growing the page. -->
+                    <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Profiles}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Style="{StaticResource Card}" Padding="16,13" Margin="0,0,0,10"
+                                <Border Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,8"
                                         ToolTip="{Binding DetailToolTip}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -297,9 +301,8 @@
                                             <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
                                                        TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{Binding SummaryText}" Style="{StaticResource Text.Muted}"
+                                                       TextTrimming="CharacterEllipsis"
                                                        Margin="0,3,0,0" />
-                                            <TextBlock Text="{Binding UpdatedText}" Style="{StaticResource Text.Faint}"
-                                                       Margin="0,2,0,0" />
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -330,19 +333,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-
-                    <TextBlock Text="SETTINGS" Style="{StaticResource Text.SectionHeader}" Margin="2,16,0,10" />
-
-                    <Border Style="{StaticResource Card}" Padding="16,14">
-                        <StackPanel>
-                            <CheckBox Content="Show the system tray icon"
-                                      IsChecked="{Binding ShowTrayIcon, Mode=TwoWay}" />
-                            <CheckBox Content="Keep running in the tray when the window is closed (hotkeys stay active)"
-                                      IsChecked="{Binding CloseToTray, Mode=TwoWay}"
-                                      IsEnabled="{Binding ShowTrayIcon}"
-                                      Margin="0,10,0,0" />
-                        </StackPanel>
-                    </Border>
+                    </ScrollViewer>
 
                 </StackPanel>
             </ScrollViewer>
@@ -361,37 +352,40 @@
                                Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisInverted}}" />
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                  Padding="24,22,14,24"
+                                  Padding="22,16,12,14"
                                   Visibility="{Binding HasSelection, Converter={StaticResource BoolToVis}}">
                         <StackPanel DataContext="{Binding SelectedMonitor}">
                             <TextBlock Text="DETAILS" Style="{StaticResource Text.SectionHeader}" />
                             <TextBlock Text="{Binding Title}" FontSize="17" FontWeight="SemiBold"
-                                       TextWrapping="Wrap" Margin="0,0,0,18" />
+                                       TextTrimming="CharacterEllipsis" Margin="0,0,0,12" />
 
                             <ItemsControl ItemsSource="{Binding Details}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Margin="0,0,10,11">
+                                        <Grid Margin="0,0,6,7">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="112" />
+                                                <ColumnDefinition Width="104" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0"
                                                        Text="{Binding Label}"
-                                                       Style="{StaticResource Text.Faint}"
-                                                       TextWrapping="Wrap" />
+                                                       Style="{StaticResource Text.Faint}" />
+                                            <!-- One line each. The device and adapter paths used to
+                                                 wrap to four lines apiece and made the whole panel
+                                                 scroll; the full value lives in the tooltip. -->
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding Value}"
                                                        FontSize="12"
-                                                       TextWrapping="Wrap" />
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Value}" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
                             <Border Style="{StaticResource Card}"
-                                    Padding="16,15"
-                                    Margin="0,10,10,0">
+                                    Padding="14,12"
+                                    Margin="0,8,4,0">
                                 <StackPanel>
                                     <TextBlock Text="CHANGE SETTINGS" Style="{StaticResource Text.SectionHeader}" />
 
@@ -404,11 +398,11 @@
                                     <!-- The rest needs a mode list, which only a monitor that is
                                          already on can provide. -->
                                     <StackPanel Visibility="{Binding CanConfigure, Converter={StaticResource BoolToVis}}">
-                                    <TextBlock Text="Resolution" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
+                                    <TextBlock Text="Resolution" Style="{StaticResource Text.Faint}" Margin="0,10,0,5" />
                                     <ComboBox ItemsSource="{Binding AvailableResolutions}"
                                               SelectedItem="{Binding SelectedResolution, Mode=TwoWay}" />
 
-                                    <TextBlock Text="Refresh rate" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
+                                    <TextBlock Text="Refresh rate" Style="{StaticResource Text.Faint}" Margin="0,10,0,5" />
                                     <ComboBox ItemsSource="{Binding AvailableRefreshRates}"
                                               SelectedItem="{Binding SelectedRefreshHz, Mode=TwoWay}">
                                         <ComboBox.ItemTemplate>
@@ -418,7 +412,7 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
-                                    <TextBlock Text="Orientation" Style="{StaticResource Text.Faint}" Margin="0,14,0,6" />
+                                    <TextBlock Text="Orientation" Style="{StaticResource Text.Faint}" Margin="0,10,0,5" />
                                     <!-- Explicit ItemTemplate rather than DisplayMemberPath: the
                                          selection box provably honours ItemTemplate (the refresh
                                          rate picker relies on it), so the label can never regress
@@ -435,10 +429,10 @@
                                     <CheckBox Content="Make this the primary display"
                                               IsChecked="{Binding MakePrimary, Mode=TwoWay}"
                                               IsEnabled="{Binding CanBecomePrimary}"
-                                              Margin="0,16,0,0" />
+                                              Margin="0,12,0,0" />
                                     </StackPanel>
 
-                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
                                         <Button Content="Reset"
                                                 Style="{StaticResource Button.Ghost}"
                                                 Padding="14,6"
@@ -452,8 +446,8 @@
 
                                     <TextBlock Style="{StaticResource Text.Faint}"
                                                TextWrapping="Wrap"
-                                               Margin="0,14,0,0"
-                                               Text="After applying you get 15 seconds to confirm. If you do not, the previous settings come back automatically." />
+                                               Margin="0,10,0,0"
+                                               Text="After applying you get 15 seconds to confirm; otherwise the previous settings come back." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -463,16 +457,49 @@
         </Grid>
 
         <!-- ======================= Status bar ======================= -->
+        <!-- The two settings live down here as quiet toggles: they are set once and glanced at
+             rarely, which is not worth a whole section of the page. -->
         <Border Grid.Row="2"
                 Background="{StaticResource Brush.Surface}"
                 BorderBrush="{StaticResource Brush.Border}"
                 BorderThickness="0,1,0,0"
-                Padding="26,9">
+                Padding="26,8">
             <Grid>
-                <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.Faint}" />
-                <TextBlock Text="{Binding LogFilePath}"
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="{Binding StatusText}"
                            Style="{StaticResource Text.Faint}"
-                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,0,16,0" />
+
+                <CheckBox Grid.Column="1"
+                          Content="Tray icon"
+                          FontSize="12"
+                          VerticalAlignment="Center"
+                          Margin="0,0,16,0"
+                          IsChecked="{Binding ShowTrayIcon, Mode=TwoWay}"
+                          ToolTip="Show the ScreenShift icon in the system tray" />
+
+                <CheckBox Grid.Column="2"
+                          Content="Close to tray"
+                          FontSize="12"
+                          VerticalAlignment="Center"
+                          Margin="0,0,20,0"
+                          IsChecked="{Binding CloseToTray, Mode=TwoWay}"
+                          IsEnabled="{Binding ShowTrayIcon}"
+                          ToolTip="Closing the window keeps ScreenShift running in the tray, so global hotkeys stay active" />
+
+                <TextBlock Grid.Column="3"
+                           Text="{Binding LogFilePath}"
+                           Style="{StaticResource Text.Faint}"
+                           VerticalAlignment="Center"
+                           MaxWidth="300"
                            TextTrimming="CharacterEllipsis"
                            ToolTip="{Binding LogFilePath}" />
             </Grid>

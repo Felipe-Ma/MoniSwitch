@@ -186,7 +186,8 @@ if (captureIndex >= 0)
         return 2;
     }
 
-    return WindowCapture.Run(args[captureIndex + 1], width: 1280, height: 1300);
+    // Matches the app's default window size, so the capture proves the no-scroll layout.
+    return WindowCapture.Run(args[captureIndex + 1], width: 1240, height: 900);
 }
 
 var logger = new ConsoleLogger();
