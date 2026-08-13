@@ -30,6 +30,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IAppLogger _logger;
 
     private bool _isApplying;
+    private bool _startWithWindows;
     private MonitorViewModel? _selectedMonitor;
     private string _summaryText = string.Empty;
     private string _statusText = "Ready.";
@@ -60,6 +61,15 @@ public sealed class MainViewModel : ObservableObject
         SaveProfileCommand = new RelayCommand(SaveCurrentAsProfile, () => !_isApplying);
 
         _hotkeyService.ProfileHotkeyPressed += ApplyProfileById;
+
+        try
+        {
+            _startWithWindows = StartupRegistration.IsEnabled();
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Could not read the startup registration: {ex.Message}");
+        }
 
         LoadProfiles();
     }
@@ -105,6 +115,48 @@ public sealed class MainViewModel : ObservableObject
 
             _settingsService.Current.CloseToTray = value;
             _settingsService.Save();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// Launch at sign-in, minimized to the tray. Backed by the registry Run key rather than
+    /// settings.json — the registry is what Windows actually reads, and Task Manager's Startup
+    /// page edits the same entry, so there is no second copy to drift out of step.
+    /// </summary>
+    public bool StartWithWindows
+    {
+        get => _startWithWindows;
+        set
+        {
+            if (_startWithWindows == value)
+            {
+                return;
+            }
+
+            try
+            {
+                if (value)
+                {
+                    StartupRegistration.Enable();
+                }
+                else
+                {
+                    StartupRegistration.Disable();
+                }
+
+                _startWithWindows = value;
+                _logger.Info(value
+                    ? "Registered to start with Windows (minimized to the tray)."
+                    : "Removed the start-with-Windows registration.");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Changing the startup registration failed.", ex);
+                _interaction.ShowError("Could not change startup registration", ex.Message);
+            }
+
+            // Raised even on failure, so a checkbox that could not take effect snaps back.
             OnPropertyChanged();
         }
     }

@@ -470,6 +470,7 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Text="{Binding StatusText}"
@@ -479,6 +480,14 @@
                            Margin="0,0,16,0" />
 
                 <CheckBox Grid.Column="1"
+                          Content="Start with Windows"
+                          FontSize="12"
+                          VerticalAlignment="Center"
+                          Margin="0,0,16,0"
+                          IsChecked="{Binding StartWithWindows, Mode=TwoWay}"
+                          ToolTip="Launch ScreenShift at sign-in, minimized to the tray, so profiles and hotkeys are always available" />
+
+                <CheckBox Grid.Column="2"
                           Content="Tray icon"
                           FontSize="12"
                           VerticalAlignment="Center"
@@ -486,7 +495,7 @@
                           IsChecked="{Binding ShowTrayIcon, Mode=TwoWay}"
                           ToolTip="Show the ScreenShift icon in the system tray" />
 
-                <CheckBox Grid.Column="2"
+                <CheckBox Grid.Column="3"
                           Content="Close to tray"
                           FontSize="12"
                           VerticalAlignment="Center"
@@ -495,7 +504,7 @@
                           IsEnabled="{Binding ShowTrayIcon}"
                           ToolTip="Closing the window keeps ScreenShift running in the tray, so global hotkeys stay active" />
 
-                <TextBlock Grid.Column="3"
+                <TextBlock Grid.Column="4"
                            Text="{Binding LogFilePath}"
                            Style="{StaticResource Text.Faint}"
                            VerticalAlignment="Center"

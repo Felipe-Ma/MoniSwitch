@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using ScreenShift.Services;
 using ScreenShift.ViewModels;
@@ -46,7 +47,22 @@ public partial class App : Application
 
             window = new MainWindow(viewModel);
             MainWindow = window;
-            window.Show();
+
+            // --minimized (what the startup registration passes) begins life in the tray. The
+            // window handle still has to exist — the tray icon and the hotkeys both hang off it —
+            // so it is created without showing the window. If the tray is disabled the flag is
+            // ignored, because an invisible app with no icon would be unreachable.
+            var startMinimized = e.Args.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase));
+
+            if (startMinimized && settingsService.Current.ShowTrayIcon)
+            {
+                new WindowInteropHelper(window).EnsureHandle();
+                _logger.Info("Started minimized to the tray.");
+            }
+            else
+            {
+                window.Show();
+            }
         }
         catch (Exception ex)
         {

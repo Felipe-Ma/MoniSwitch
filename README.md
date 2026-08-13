@@ -142,7 +142,13 @@ hotkey, never the app. Assigning a gesture that another profile holds moves it.
 
 Closing the window hides to the tray by default, because hotkeys only work while the process is
 alive; Exit in the tray menu really exits. Both behaviours are settings, stored in
-`%APPDATA%\ScreenShift\settings.json` and toggleable in the app.
+`%APPDATA%\ScreenShift\settings.json` and toggleable in the status bar.
+
+**Start with Windows** (also in the status bar) registers a per-user Run entry pointing at the
+current executable with `--minimized`, so sign-in brings up the tray icon and hotkeys without
+opening the window. The registry entry is the single source of truth — Task Manager's Startup page
+manages the same one — so there is no copy in settings.json to drift out of step. `--minimized` is
+ignored when the tray icon is disabled, since an invisible app with no icon would be unreachable.
 
 ## Testing display changes
 

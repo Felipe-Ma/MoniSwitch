@@ -85,6 +85,18 @@ if (args.Any(a => string.Equals(a, "--test-tray", StringComparison.OrdinalIgnore
     return TrayTest.Run();
 }
 
+var startupIndex = Array.FindIndex(args, a => string.Equals(a, "--startup", StringComparison.OrdinalIgnoreCase));
+if (startupIndex >= 0)
+{
+    if (startupIndex + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--startup needs an action: status, on or off.");
+        return 2;
+    }
+
+    return StartupCommand.Run(args[startupIndex + 1]);
+}
+
 if (args.Any(a => string.Equals(a, "--test-hotkey", StringComparison.OrdinalIgnoreCase)))
 {
     return HotkeyTest.Run();

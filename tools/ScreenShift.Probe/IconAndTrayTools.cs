@@ -76,6 +76,37 @@ internal static class MakeIcon
     }
 }
 
+/// <summary>Exercises the Run-key registration: on, off, status. The 'on' path registers the
+/// probe's own path, so tests should always finish with 'off'.</summary>
+internal static class StartupCommand
+{
+    public static int Run(string action)
+    {
+        switch (action.ToLowerInvariant())
+        {
+            case "status":
+                Console.WriteLine(StartupRegistration.IsEnabled()
+                    ? $"Registered: {StartupRegistration.RegisteredCommand()}"
+                    : "Not registered to start with Windows.");
+                return 0;
+
+            case "on":
+                StartupRegistration.Enable();
+                Console.WriteLine($"Registered: {StartupRegistration.RegisteredCommand()}");
+                return 0;
+
+            case "off":
+                StartupRegistration.Disable();
+                Console.WriteLine($"Removed. IsEnabled now: {StartupRegistration.IsEnabled()}");
+                return 0;
+
+            default:
+                Console.Error.WriteLine("Use --startup status, on or off.");
+                return 2;
+        }
+    }
+}
+
 /// <summary>
 /// Adds a real tray icon for a moment, then removes it. Verifies the Shell_NotifyIcon calls and
 /// the runtime HICON creation — the parts of the tray that can fail structurally.
