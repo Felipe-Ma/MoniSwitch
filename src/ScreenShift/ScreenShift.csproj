@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ScreenShift</AssemblyName>
+    <RootNamespace>ScreenShift</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Generated from Views/IconArt.cs via the probe's make-icon command; regenerate rather than edit. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!--
+      Plain net8.0-windows rather than net8.0-windows10.0.x: everything here goes through
+      P/Invoke to user32/dwmapi, so the WinRT projections a Windows SDK version would pull in
+      would be dead weight. [SupportedOSPlatform("windows")] on the native types is what keeps
+      the platform-compatibility analyzer satisfied.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The probe is this project's diagnostic harness; it needs the raw native layer to dump
+         DEVMODE values that the clean models deliberately hide. -->
+    <InternalsVisibleTo Include="ScreenShift.Probe" />
+  </ItemGroup>
+
+</Project>

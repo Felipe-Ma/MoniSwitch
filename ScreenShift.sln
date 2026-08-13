@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{341EAEAE-60EB-484D-8AA4-29DB561D593E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenShift", "src\ScreenShift\ScreenShift.csproj", "{E0A2AF50-67CD-43D8-AF39-91DB68A36E97}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{CA0308AE-E6FE-4E8A-8DDF-510F27A4CF58}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenShift.Probe", "tools\ScreenShift.Probe\ScreenShift.Probe.csproj", "{5A7D4053-71AD-4CB1-B632-1639FABFD10D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E0A2AF50-67CD-43D8-AF39-91DB68A36E97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E0A2AF50-67CD-43D8-AF39-91DB68A36E97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E0A2AF50-67CD-43D8-AF39-91DB68A36E97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E0A2AF50-67CD-43D8-AF39-91DB68A36E97}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5A7D4053-71AD-4CB1-B632-1639FABFD10D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A7D4053-71AD-4CB1-B632-1639FABFD10D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A7D4053-71AD-4CB1-B632-1639FABFD10D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A7D4053-71AD-4CB1-B632-1639FABFD10D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E0A2AF50-67CD-43D8-AF39-91DB68A36E97} = {341EAEAE-60EB-484D-8AA4-29DB561D593E}
+		{5A7D4053-71AD-4CB1-B632-1639FABFD10D} = {CA0308AE-E6FE-4E8A-8DDF-510F27A4CF58}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,60 @@
+<Window x:Class="ScreenShift.Views.ConfirmChangesDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Keep these display settings?"
+        Width="440"
+        SizeToContent="Height"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <Border Background="{StaticResource Brush.Surface}"
+            BorderBrush="{StaticResource Brush.BorderStrong}"
+            BorderThickness="1"
+            CornerRadius="12"
+            Padding="26,24">
+        <StackPanel>
+            <TextBlock Text="Keep these display settings?"
+                       FontSize="17"
+                       FontWeight="SemiBold" />
+
+            <TextBlock x:Name="SummaryText"
+                       Style="{StaticResource Text.Muted}"
+                       TextWrapping="Wrap"
+                       Margin="0,9,0,0" />
+
+            <TextBlock x:Name="CountdownText"
+                       Style="{StaticResource Text.Muted}"
+                       Margin="0,20,0,7" />
+
+            <!-- Drains left to right as the deadline approaches. -->
+            <Border Height="4" CornerRadius="2" Background="{StaticResource Brush.SurfaceHover}">
+                <Border x:Name="ProgressFill"
+                        HorizontalAlignment="Left"
+                        Width="0"
+                        Background="{StaticResource Brush.Accent}"
+                        CornerRadius="2" />
+            </Border>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                <Button x:Name="RevertButton"
+                        Content="Revert"
+                        Style="{StaticResource Button.Ghost}"
+                        IsCancel="True"
+                        Click="OnRevert"
+                        Margin="0,0,10,0" />
+                <Button x:Name="KeepButton"
+                        Content="Keep changes"
+                        Style="{StaticResource Button.Accent}"
+                        IsDefault="True"
+                        Click="OnKeep" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>
